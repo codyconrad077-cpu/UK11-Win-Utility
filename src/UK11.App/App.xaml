@@ -1,0 +1,8 @@
+<Application x:Class="UK11.App.App" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" StartupUri="MainWindow.xaml">
+ <Application.Resources>
+  <SolidColorBrush x:Key="Accent" Color="#37B9FF"/>
+  <Style TargetType="TextBlock"><Setter Property="Foreground" Value="#E4EDFA"/><Setter Property="TextWrapping" Value="Wrap"/></Style>
+  <Style TargetType="Button"><Setter Property="Background" Value="#152C45"/><Setter Property="Foreground" Value="White"/><Setter Property="Padding" Value="18,10"/><Setter Property="Margin" Value="0,4,10,4"/><Setter Property="BorderBrush" Value="#285779"/><Setter Property="Cursor" Value="Hand"/></Style>
+  <Style TargetType="TextBox"><Setter Property="Background" Value="#101D2C"/><Setter Property="Foreground" Value="White"/><Setter Property="Padding" Value="12"/><Setter Property="BorderBrush" Value="#285779"/><Setter Property="CaretBrush" Value="White"/></Style>
+ </Application.Resources>
+</Application>

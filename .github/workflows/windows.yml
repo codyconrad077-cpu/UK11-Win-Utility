@@ -12,7 +12,17 @@ jobs:
           global-json-file: global.json
       - name: Build, test and publish unsigned portable executable
         shell: pwsh
-        run: ./scripts/build.ps1 -Publish
+        run: |
+          $output = & ./scripts/build.ps1 -Publish *>&1
+          $succeeded = $?
+          $output | ForEach-Object { Write-Host $_ }
+          if (-not $succeeded) {
+            $output | Select-Object -Last 35 | ForEach-Object {
+              $line = "$_".Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
+              Write-Host "::error::$line"
+            }
+            exit 1
+          }
       - uses: actions/upload-artifact@v4
         with:
           name: UK11-Ultimate-win-x64-unsigned

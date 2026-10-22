@@ -1,14 +1,13 @@
-# Windows acceptance gate
+# Windows acceptance gate — 0.2
 
-Not executed in the Linux development machine. Before distributing this milestone:
+CI exercises real Windows compilation, isolated registry writes, power-plan parameter writes against an inactive duplicate, and programmatic WPF startup/interactions/rendering. It does not establish actual desktop effects, battery behavior or performance gains. Before a production release:
 
-1. Run `./scripts/build.ps1 -Publish` on Windows 10 and Windows 11. The native test runner must pass; it uses temporary keys, not the real catalogue paths.
-2. Launch the portable EXE as a standard user; confirm no console or UAC prompt. Verify CPU, board, BIOS, OS, thread count and memory against Windows tools. Unavailable hardware fields must stay visibly unavailable.
-3. Check navigation, keyboard focus, search persistence and resizing at 100%, 150% and 200% DPI. Check high contrast and screen reader usability; accessibility has not yet been formally audited.
-4. Record each original catalogue DWORD and its type in a disposable VM. Test supported, absent and unexpected-type detection. Confirm previews, cancelled changes, read-only/denied-access failures and backup creation before mutation.
-5. Apply each supported action separately. Check the exact registry write, actual desktop/capture behaviour after the stated refresh, and accurate displayed state after restarting UK11. A stored value alone is not evidence of a performance gain.
-6. Restore individually and confirm exact original DWORD. Apply again, interrupt the app after backup creation, reopen and restore. Check logs and pending recovery. Change a value externally to a third value and verify restore refuses it.
-7. Open a second instance and confirm the data-directory lock. Close while an operation is active and confirm closing is deferred. Confirm no continuous background process remains after closing.
-8. Copy the self-contained output to a clean x64 Windows VM without .NET; launch and repeat the tests. An unsigned executable may trigger Windows reputation prompts. Do not bypass security protections or advertise signing.
-
-Do not publish as production-ready until this gate is complete and failures are fixed. Test performance using repeatable workloads and before/after measurements; none are supplied by this milestone.
+1. Run `./scripts/build.ps1 -Publish` on Windows 10 and Windows 11. Inspect native-report.json: discovered targets, successfully changed/restored targets, read-only skips and no-alternative skips remain distinct.
+2. Open the self-contained EXE as a standard user. Compare CPU, board, BIOS, OS, thread count, memory and processor load with Windows tools. Check chart behavior over two minutes; missing data must stay visibly unavailable.
+3. Review dashboard, catalogue and recovery at 100%, 150% and 200% DPI. Resize to minimum dimensions. Check maximize/restore, keyboard navigation, focus visibility, screen reader announcements and high contrast. The custom palette has not been formally accessibility-audited.
+4. On a disposable Windows VM, record exact registry values/types for each fixed preference. Test present/absent/wrong-type/build-incompatible states, cancelled previews and denied access. Apply one at a time, check the actual desktop effect after required sign-out/restart, and restore the exact original. Legacy preferences that are ignored must not be advertised as effect-verified.
+5. Compare power descriptions/options/ranges with Windows APIs or `powercfg /query`. Test individual changes on appropriate hardware only. Confirm exact AC/DC side and captured scheme, active-plan refresh, restore after app restart, and backups retained after switching plans. Test desktops without batteries and policy-restricted accounts.
+6. Apply a small preference batch; change a value externally between preview and confirmation and verify it aborts. Inject a later write failure and verify reverse rollback, retained originals and clear errors. Confirm full restore preserves external third values while continuing other restorations.
+7. Test favourites/search/category persistence and rescan. Reopen after a Prepared operation, recover it, and retain backups across upgrading from 0.1. Start a second instance and confirm the per-user lock. Close during an operation and confirm closing is deferred.
+8. Copy only the EXE to a clean Windows x64 VM without .NET. Confirm startup and recovery work. Never claim signing or bypass Windows reputation/security checks. There is no automatic updater.
+9. Measure repeatable workload performance before and after individually justified changes. Include thermal/battery trade-offs and distinguish configuration preferences from demonstrated improvements. No "300 proven optimisations" claim is supported by API or UI smoke tests alone.

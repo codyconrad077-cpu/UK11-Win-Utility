@@ -63,12 +63,20 @@ public sealed class PowerSettings : ISettingsStore
             {
                 var title = Friendly(scheme, group, setting);
                 var description = Description(scheme, group, setting);
-                var options = Options(group, setting);
                 var ranged = PowerReadValueMin(IntPtr.Zero, [group], [setting], out var min) == 0
                     && PowerReadValueMax(IntPtr.Zero, [group], [setting], out _) == 0;
                 PowerReadValueMax(IntPtr.Zero, [group], [setting], out var max);
                 PowerReadValueIncrement(IntPtr.Zero, [group], [setting], out var step);
                 if (step == 0) step = 1;
+                // Continuous settings can expose a very large/infinite sequence of possible values.
+                // Prefer their documented numeric range instead of treating them as finite enum choices.
+                Choice[] options = [];
+                var complete = true;
+                if (!ranged)
+                {
+                    try { options = Options(group, setting); }
+                    catch (InvalidDataException ex) { complete = false; description += " Editing unavailable: " + ex.Message; }
+                }
                 var units = Units(group, setting);
                 foreach (var ac in new[] { true, false })
                 {
@@ -79,7 +87,7 @@ public sealed class PowerSettings : ISettingsStore
                     {
                         Backend = ac ? "PowerAC" : "PowerDC", Scheme = scheme.ToString(), Group = groupName,
                         Choices = options, Minimum = min, Maximum = max, Increment = step, Units = units,
-                        Writable = (options.Length > 0 || ranged) && PowerSettingAccessCheck(ac ? 0u : 1u, [setting]) == 0
+                        Writable = complete && (options.Length > 0 || ranged) && PowerSettingAccessCheck(ac ? 0u : 1u, [setting]) == 0
                     };
                     var current = store.Read(t);
                     if (current.Exists) result.Add(t with { Desired = current.Number });

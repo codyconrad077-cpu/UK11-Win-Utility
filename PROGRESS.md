@@ -17,9 +17,10 @@
 
 - [x] Linux Release cross-compilation: zero warnings/errors.
 - [x] 155 portable tests pass: per-definition apply/undo and missing-value behavior, idempotence, faults, conflicts, persisted originals, preferences, corrupted metadata, bounds/choices, non-restorable originals, batch failure rollback, stale previews, duplicate targets and catalogue integrity.
-- [x] Windows validation passed in release run 39845355621: 45 isolated registry checks, hardware/memory checks, 338 native power write/verify/exact-restore checks on an inactive duplicate plan, and WPF startup/navigation/search/favourites/rendering checks.
+- [x] Windows validation passed in [release run 39846513901](https://github.com/codyconrad077-cpu/UK11-Win-Utility/actions/runs/39846513901): 155 portable tests, 45 isolated registry checks, hardware/memory checks, 338 native power write/verify/exact-restore checks on an inactive duplicate plan, and eight WPF checks including startup/navigation/search/favourites/minimum-size layout/rendering.
 - [x] The test machine exposed 401 targets: 45 fixed preferences and 356 AC/DC endpoints for 178 power parameters. 338 power endpoints were writable and verified; 18 were read-only; zero no-alternative skips. Counts vary by computer.
-- [x] Inspected actual Windows dashboard/catalogue screenshots. Corrected light scrollbars, a clipped state filter, fallback labels and excessive long-title growth. Minimum-size layout is included in the next release smoke check.
+- [x] Inspected final Windows dashboard/catalogue screenshots from v0.2.0-preview.2. Dark scrollbars, readable filters, bounded titles and a visible matched selection are rendered correctly. Minimum-size layout passed. Human DPI/accessibility review remains outstanding.
+- [x] Published the self-contained unsigned v0.2.0-preview.2 EXE on GitHub Releases and verified its direct download returns HTTP 200. Attached native/UI JSON reports preserve the evidence and counts.
 
 ## Still requires manual hardware/Windows acceptance
 

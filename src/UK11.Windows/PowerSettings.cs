@@ -78,7 +78,7 @@ public sealed class PowerSettings : ISettingsStore
                 // Continuous settings can expose unbounded possible-value sequences; use their range instead.
                 Choice[] options = [];
                 var complete = true;
-                try { options = Options(group, setting); }
+                try { options = Options(group, setting, title); }
                 catch (InvalidDataException ex) { complete = ranged; if (!ranged) description += " Editing unavailable: " + ex.Message; }
                 var units = Units(group, setting);
                 // This legacy Start-menu action remains enumerable but rejects writes on supported modern Windows.
@@ -142,7 +142,7 @@ public sealed class PowerSettings : ISettingsStore
         return PowerReadValueUnitsSpecifier(IntPtr.Zero, [group], [setting], buffer, ref size) == 0
             ? Encoding.Unicode.GetString(buffer, 0, (int)size).TrimEnd('\0') : "";
     }
-    private static Choice[] Options(Guid group, Guid setting)
+    private static Choice[] Options(Guid group, Guid setting, string settingTitle)
     {
         var options = new List<Choice>();
         for (uint index = 0; index < 256; index++)
@@ -154,6 +154,7 @@ public sealed class PowerSettings : ISettingsStore
             var name = new byte[4096]; uint nameSize = (uint)name.Length;
             var label = PowerReadPossibleFriendlyName(IntPtr.Zero, [group], [setting], index, name, ref nameSize) == 0
                 ? Encoding.Unicode.GetString(name, 0, (int)nameSize).TrimEnd('\0') : BitConverter.ToUInt32(value).ToString();
+            if (string.IsNullOrWhiteSpace(label) || label.Trim() == settingTitle.Trim()) label = "Value " + BitConverter.ToUInt32(value);
             options.Add(new(BitConverter.ToInt32(value), label));
         }
         throw new InvalidDataException("Power option count exceeds the safety limit.");

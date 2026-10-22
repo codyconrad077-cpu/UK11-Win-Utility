@@ -172,6 +172,7 @@ public partial class MainWindow : Window
             .OrderBy(r => r.Tweak.Category).ThenBy(r => r.Title).ToList();
         TweakList.ItemsSource = visible;
         TweakList.SelectedItem = visible.FirstOrDefault(r => r.Tweak.Id == selectedId) ?? visible.FirstOrDefault();
+        if (TweakList.SelectedItem is not null) TweakList.ScrollIntoView(TweakList.SelectedItem);
         ResultCount.Text = $"{visible.Count} of {rows.Count} targets";
         UpdateSelectionCount(); ShowDetail();
     }
@@ -191,7 +192,7 @@ public partial class MainWindow : Window
         TargetChoices.Visibility = TargetNumber.Visibility = Visibility.Collapsed;
         if (r is null) { DetailTitle.Text = "No matching settings"; DetailCategory.Text = "Adjust your filters to explore the library."; DetailEffect.Text = DetailCurrent.Text = DetailRisk.Text = DetailEvidence.Text = DetailRestart.Text = DetailPath.Text = TargetLabel.Text = RangeText.Text = ""; return; }
         var t = r.Tweak;
-        DetailTitle.Text = t.Title; DetailCategory.Text = r.CategoryLabel;
+        DetailTitle.Text = t.Title; DetailTitle.ToolTip = t.Title; DetailCategory.Text = r.CategoryLabel;
         DetailCurrent.Text = r.Inspection.Current.Exists ? t.Format(r.Inspection.Current.Number) : "Unavailable";
         DetailEffect.Text = r.Error ?? t.Effect; DetailRisk.Text = t.Risk; DetailEvidence.Text = t.Evidence; DetailRestart.Text = t.Restart;
         DetailPath.Text = t.Adjustable ? $"{t.Backend}\nPlan: {t.Scheme}\nGroup: {t.Path}\nSetting: {t.Name}\n{t.Id}" : $"HKCU\\{t.Path}\\{t.Name}\nDWORD → {t.Desired}\n{t.Id}";
@@ -289,8 +290,8 @@ public partial class MainWindow : Window
     private void TweaksClick(object sender, RoutedEventArgs e) => ShowPage("Optimisations");
     private void BackupsClick(object sender, RoutedEventArgs e) => ShowPage("Backups");
     private async void RefreshClick(object sender, RoutedEventArgs e) => await Rescan();
-    private void SearchChanged(object sender, TextChangedEventArgs e) => FilterRows();
-    private void FilterChanged(object sender, SelectionChangedEventArgs e) => FilterRows();
+    private void SearchChanged(object sender, TextChangedEventArgs e) => FilterRows("");
+    private void FilterChanged(object sender, SelectionChangedEventArgs e) => FilterRows("");
     private void TweakSelectionChanged(object sender, SelectionChangedEventArgs e) => ShowDetail();
     private void SelectionChecked(object sender, RoutedEventArgs e) => UpdateSelectionCount();
     private void FavoritesClick(object sender, RoutedEventArgs e) { Categories.SelectedIndex = 0; States.SelectedItem = "Favourites"; ShowPage("Optimisations"); }
@@ -340,12 +341,17 @@ public partial class MainWindow : Window
         if (rows.Any(r => r.Tweak.Adjustable) && TweakList.Items.Count == 0) throw new InvalidOperationException("Power filter failed.");
         Categories.SelectedIndex = 0; ShowPage("Backups");
         if (BackupsPanel.Visibility != Visibility.Visible) throw new InvalidOperationException("Recovery navigation failed.");
+        var savedWidth = Width; var savedHeight = Height;
+        Width = MinWidth; Height = MinHeight; ShowPage("Optimisations"); UpdateLayout();
+        if (TweakList.ActualWidth < 300 || States.ActualHeight < 34 || ApplyButton.ActualWidth < 200)
+            throw new InvalidOperationException("Minimum-size catalogue layout clipped essential controls.");
+        Width = savedWidth; Height = savedHeight;
         ShowPage("Dashboard"); await Dispatcher.InvokeAsync(UpdateLayout, DispatcherPriority.Render);
         var directory = Path.GetDirectoryName(smokePath!)!; Directory.CreateDirectory(directory);
         Capture(smokePath!);
         ShowPage("Optimisations"); await Dispatcher.InvokeAsync(UpdateLayout, DispatcherPriority.Render);
         Capture(Path.Combine(directory, Path.GetFileNameWithoutExtension(smokePath!) + "-catalogue.png"));
-        File.WriteAllText(smokePath + ".json", JsonSerializer.Serialize(new { catalogueTargets = rows.Count, registryPreferences = Catalog.All.Count, powerTargets = rows.Count(r => r.Tweak.Adjustable), distinctPowerSettings = rows.Where(r => r.Tweak.Adjustable).Select(r => r.Tweak.Path + "/" + r.Tweak.Name).Distinct().Count(), assertions = 7, changesApplied = 0 }));
+        File.WriteAllText(smokePath + ".json", JsonSerializer.Serialize(new { catalogueTargets = rows.Count, registryPreferences = Catalog.All.Count, powerTargets = rows.Count(r => r.Tweak.Adjustable), distinctPowerSettings = rows.Where(r => r.Tweak.Adjustable).Select(r => r.Tweak.Path + "/" + r.Tweak.Name).Distinct().Count(), assertions = 8, changesApplied = 0 }));
     }
     private void Capture(string path)
     {

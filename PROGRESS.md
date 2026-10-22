@@ -16,8 +16,8 @@
 ## Current validation
 
 - [x] Linux Release cross-compilation: zero warnings/errors.
-- [x] 154 portable tests pass: per-definition apply/undo and missing-value behavior, idempotence, faults, conflicts, persisted originals, preferences, corrupted metadata, bounds/choices, batch failure rollback, stale previews, duplicate targets and catalogue integrity.
-- [ ] Windows 0.2 native validation and rendered UI smoke run: in progress. The native test runner now checks nonzero targets correctly instead of assuming all preferences write zero.
+- [x] 155 portable tests pass: per-definition apply/undo and missing-value behavior, idempotence, faults, conflicts, persisted originals, preferences, corrupted metadata, bounds/choices, non-restorable originals, batch failure rollback, stale previews, duplicate targets and catalogue integrity.
+- [x] Windows native validation and WPF smoke checks passed in run 39845021441: all writable power targets were changed and restored on an inactive duplicate plan, and UI startup/navigation/search/favourites/rendering completed. The release run repeats these checks.
 - [ ] Inspect the actual dashboard/catalogue screenshots from the Windows UI run before final delivery.
 - [ ] Record discovered targets, native write/restore checks and read-only/no-alternative skips from the native report.
 

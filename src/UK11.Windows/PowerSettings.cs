@@ -44,7 +44,12 @@ public sealed class PowerSettings : ISettingsStore
     public static Guid Duplicate(Guid source)
     {
         Check(PowerDuplicateScheme(IntPtr.Zero, [source], out var pointer));
-        try { return Marshal.PtrToStructure<Guid>(pointer); }
+        try
+        {
+            var copy = Marshal.PtrToStructure<Guid>(pointer);
+            if (copy == source) throw new InvalidOperationException("Refusing to test a duplicate that matches the active scheme.");
+            return copy;
+        }
         finally { LocalFree(pointer); }
     }
     public static void DeleteInactive(Guid scheme)

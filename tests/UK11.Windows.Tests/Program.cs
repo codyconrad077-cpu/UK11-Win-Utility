@@ -40,12 +40,14 @@ if (discovered.Count == 0) throw new Exception("No power settings discovered");
 var clone = PowerSettings.Duplicate(active);
 var powerDirectory = Path.Combine(Path.GetTempPath(), "uk11-power-" + Guid.NewGuid());
 var testedPower = 0; var readOnlyPower = 0; var noAlternativePower = 0;
+var powerFailures = new List<string>();
+var powerChecks = new List<object>();
 try
 {
     var store = new PowerSettings(); var engine = new Engine(store, powerDirectory);
     foreach (var setting in PowerSettings.Discover(clone))
     {
-        if (!setting.Writable) { readOnlyPower++; continue; }
+        if (!setting.Writable) { readOnlyPower++; powerChecks.Add(new { setting.Name, setting.Path, setting.Backend, setting.Title, result = "ReadOnly" }); continue; }
         var before = store.Read(setting);
         int? alternative = setting.Choices.FirstOrDefault(c => c.Number != before.Number)?.Number;
         if (setting.Choices.Length == 0)
@@ -54,17 +56,29 @@ try
             if ((ulong)current >= (ulong)setting.Minimum + setting.Increment) alternative = unchecked((int)(current - setting.Increment));
             else if ((ulong)current + setting.Increment <= setting.Maximum) alternative = unchecked((int)(current + setting.Increment));
         }
-        if (alternative is null) { noAlternativePower++; continue; }
+        if (alternative is null) { noAlternativePower++; powerChecks.Add(new { setting.Name, setting.Path, setting.Backend, setting.Title, result = "NoAlternative" }); continue; }
         var target = setting with { Desired = alternative.Value };
         if (!target.Accepts(target.Desired)) throw new Exception("Invalid discovered range: " + target.Title);
-        engine.Apply(target);
-        if (store.Read(target).Number != target.Desired) throw new Exception("Power write did not verify: " + target.Title);
-        // Recreate the descriptor and engine to exercise restart recovery with an independently selected target.
-        new Engine(store, powerDirectory).Restore(setting);
-        if (store.Read(setting) != before) throw new Exception("Power original did not restore: " + target.Title);
-        testedPower++;
+        try
+        {
+            engine.Apply(target);
+            if (store.Read(target).Number != target.Desired) throw new Exception("Power write did not verify: " + target.Title);
+            // Recreate the descriptor and engine to exercise restart recovery with an independently selected target.
+            new Engine(store, powerDirectory).Restore(setting);
+            if (store.Read(setting) != before) throw new Exception("Power original did not restore: " + target.Title);
+            testedPower++;
+            powerChecks.Add(new { setting.Name, setting.Path, setting.Backend, setting.Title, result = "WriteVerifiedOriginalRestored", original = unchecked((uint)before.Number), target = unchecked((uint)target.Desired) });
+        }
+        catch (Exception ex)
+        {
+            powerFailures.Add(ex.Message);
+            try { if (engine.GetBackup(target) is not null) engine.Restore(target); }
+            catch (Exception recovery) { powerFailures.Add("Test-plan recovery: " + recovery.Message); }
+        }
     }
     if (PowerSettings.ActiveScheme() != active) throw new Exception("Inactive-plan test unexpectedly switched plans");
+    if (powerFailures.Count > 0) throw new Exception($"Power checks: {testedPower} passed, {powerFailures.Count} failed, {discovered.Count} discovered. " + string.Join(" | ", powerFailures.Take(20)));
+    if (testedPower == 0) throw new Exception("No native power write/restore checks executed");
 }
 finally
 {
@@ -80,6 +94,7 @@ var report = new
     powerWriteRestoreChecks = testedPower,
     readOnlyPower,
     noAlternativePower,
+    powerChecks,
     testingMode = "Temporary HKCU registry keys and an inactive duplicate power plan; no real desktop preferences or active power settings changed."
 };
 if (args.Length > 0)

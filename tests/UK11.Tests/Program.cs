@@ -93,16 +93,24 @@ Run("dynamic power bounds and increments reject invalid targets", (e, s) =>
 {
     var power = t with { Id = "power-test", Backend = "PowerAC", Minimum = 10, Maximum = 100, Increment = 5, Desired = 12 };
     Throws(() => e.Apply(power)); Check(s.Writes == 0, "invalid power target must not write");
+    s.Current = new(true, 15);
     power = power with { Desired = 20 }; e.Apply(power);
     Check(s.Current.Number == 20, "valid target writes");
-    e.Restore(power with { Desired = 55 }); Check(s.Current.Number == 1, "original restores independently from current UI selection");
+    e.Restore(power with { Desired = 55 }); Check(s.Current.Number == 15, "original restores independently from current UI selection");
 });
 Run("enumerated power choices exclude arbitrary numbers", (e, s) =>
 {
     var power = t with { Id = "power-choice", Backend = "PowerDC", Choices = [new(0, "Off"), new(2, "On")], Desired = 1 };
     Throws(() => e.Apply(power)); Check(s.Writes == 0, "unknown choice rejected");
+    s.Current = new(true, 0);
     e.Apply(power with { Desired = 2 }); e.Restore(power);
-    Check(s.Current.Number == 1, "choice original restored");
+    Check(s.Current.Number == 0, "choice original restored");
+});
+Run("unknown power originals cannot be overwritten", (e, s) =>
+{
+    var power = t with { Id = "power-original", Backend = "PowerAC", Choices = [new(0, "Off"), new(2, "On")], Desired = 2 };
+    Throws(() => e.Apply(power));
+    Check(s.Current.Number == 1 && s.Writes == 0 && e.GetBackup(power) is null, "potentially non-restorable original preserved");
 });
 Run("read-only power settings cannot write", (e, s) =>
 {

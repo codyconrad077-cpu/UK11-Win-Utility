@@ -76,6 +76,10 @@ public sealed class PowerSettings : ISettingsStore
                 try { options = Options(group, setting); }
                 catch (InvalidDataException ex) { complete = ranged; if (!ranged) description += " Editing unavailable: " + ex.Message; }
                 var units = Units(group, setting);
+                // This legacy Start-menu action remains enumerable but rejects writes on supported modern Windows.
+                // Keep it visible for inspection; never offer it as an optimisation.
+                var legacyAction = setting == new Guid("a7066653-8d6c-40a8-910e-a1f54b84c7e5");
+                if (legacyAction) description += " Legacy Start-menu power action: editing is intentionally disabled after native validation rejected writes.";
                 foreach (var ac in new[] { true, false })
                 {
                     var t = new Tweak($"power.{scheme:N}.{group:N}.{setting:N}.{(ac ? "ac" : "dc")}", title + (ac ? " · Plugged in" : " · On battery"), "Power configuration",
@@ -85,7 +89,7 @@ public sealed class PowerSettings : ISettingsStore
                     {
                         Backend = ac ? "PowerAC" : "PowerDC", Scheme = scheme.ToString(), Group = groupName,
                         Choices = options, Minimum = min, Maximum = max, Increment = step, Units = units,
-                        Writable = complete && (options.Length > 0 || ranged) && PowerSettingAccessCheck(ac ? 0u : 1u, [setting]) == 0
+                        Writable = !legacyAction && complete && (options.Length > 0 || ranged) && PowerSettingAccessCheck(ac ? 0u : 1u, [setting]) == 0
                     };
                     var current = store.Read(t);
                     if (current.Exists)

@@ -81,6 +81,7 @@ public sealed class Engine(ISettingsStore store, string directory)
         {
             var current = Inspect(t);
             if (!current.Supported) throw new InvalidOperationException(current.Detail);
+            if (t.Adjustable && !t.Accepts(current.Current.Number)) throw new InvalidOperationException("The current power value is outside the reported choices/range; exact restoration is not established.");
             if (!t.Writable || !t.Accepts(t.Desired)) throw new InvalidOperationException("This target is read-only or outside the OS-reported allowed values.");
             if (current.Applied) return;
             var prior = GetBackup(t);
@@ -133,6 +134,8 @@ public sealed class Engine(ISettingsStore store, string directory)
                     throw new InvalidOperationException("Configuration changed since the preview. Review again: " + item.Tweak.Title);
                 if (!item.State.Supported || !item.Tweak.Writable || !item.Tweak.Accepts(item.Tweak.Desired))
                     throw new InvalidOperationException("Batch preflight failed: " + item.Tweak.Title);
+                if (item.Tweak.Adjustable && !item.Tweak.Accepts(item.State.Current.Number))
+                    throw new InvalidOperationException("Power original cannot be safely restored: " + item.Tweak.Title);
                 if (!item.State.Applied && item.Backup is { State: not "Restored" })
                     throw new InvalidOperationException("Unresolved original must be restored first: " + item.Tweak.Title);
             }

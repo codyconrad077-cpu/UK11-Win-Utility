@@ -37,6 +37,14 @@ finally
 var active = PowerSettings.ActiveScheme();
 var discovered = PowerSettings.Discover();
 if (discovered.Count == 0) throw new Exception("No power settings discovered");
+if (AdvancedBlueprints.All.Length != 60 || AdvancedBlueprints.All.Select(x => x.Id).Distinct().Count() != 60) throw new Exception("Advanced identities must be unique");
+var advanced = AdvancedCatalog.Build(discovered);
+if (advanced.Count == 0 || advanced.Count > 120 || advanced.Select(t => t.Id).Distinct().Count() != advanced.Count) throw new Exception("Invalid advanced catalogue");
+foreach (var target in advanced.Where(t => t.Writable))
+    if (!target.Accepts(target.Desired) || PowerSettings.PerformanceDefault(target) != target.Desired) throw new Exception("Advanced default is not an OS-reported valid target");
+if (!advanced.Any(t => t.Writable)) throw new Exception("No Windows High Performance defaults could be validated");
+Console.WriteLine($"PASS {advanced.Count} advanced targets, {advanced.Count(t => t.Writable)} valid Windows performance defaults");
+var workflowChecks = await WorkflowChecks.Run();
 var clone = PowerSettings.Duplicate(active);
 var powerDirectory = Path.Combine(Path.GetTempPath(), "uk11-power-" + Guid.NewGuid());
 var testedPower = 0; var readOnlyPower = 0; var noAlternativePower = 0;
@@ -89,6 +97,9 @@ var report = new
 {
     registryAdapterChecks = Catalog.All.Count,
     hardwareChecks = 1,
+    advancedTargets = advanced.Count,
+    advancedWritable = advanced.Count(t => t.Writable),
+    workflowChecks,
     powerTargetsDiscovered = discovered.Count,
     powerSettingsDiscovered = discovered.Select(t => t.Path + "/" + t.Name).Distinct().Count(),
     powerWriteRestoreChecks = testedPower,

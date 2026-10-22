@@ -1,11 +1,15 @@
 using System.Diagnostics;
 using System.IO;
+using System.Net.NetworkInformation;
+using System.Reflection;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
+using Microsoft.Win32;
 using UK11.Core;
 using UK11.Windows;
 
@@ -14,349 +18,379 @@ namespace UK11.App;
 public partial class MainWindow : Window
 {
     private readonly string data;
-    private readonly Engine engine;
-    private readonly DispatcherTimer timer = new() { Interval = TimeSpan.FromSeconds(2) };
-    private readonly CpuSampler cpu = new();
-    private readonly List<double> cpuHistory = [], memoryHistory = [];
-    private readonly HashSet<string> favorites = [];
-    private List<Tweak> catalogue = Catalog.All.ToList();
-    private List<SettingRow> rows = [];
-    private FileStream? instance;
-    private bool busy, initialized;
-    private string page = "Dashboard";
     private readonly string? smokePath;
-    private string PowerCache => Path.Combine(data, "power-catalogue.json");
-    private SettingRow? Selected => TweakList.SelectedItem as SettingRow;
+    private readonly Engine engine;
+    private readonly WindowsWorkflows workflows;
+    private readonly Sensors sensors = new();
+    private readonly CpuSampler cpu = new();
+    private readonly DispatcherTimer timer = new() { Interval = TimeSpan.FromSeconds(2) };
+    private readonly List<double?> cpuTemperatures = [], gpuTemperatures = [];
+    private FileStream? instance;
+    private List<Tweak> allTweaks = Catalog.All.ToList(), advanced = [];
+    private List<AppItem> apps = [];
+    private List<DriverItem> driverUpdates = [];
+    private JsonElement system;
+    private SensorReading latest = new(null, null, null, "Detecting…", "Unavailable", "Unavailable", "Waiting for sensors");
+    private bool ready, busy, sampling, closed;
+    private string page = "Home";
+    private readonly string[] pageNames = ["Home", "System Restore", "Drivers", "General", "Debloating", "Networking", "Advanced", "Services", "BIOS / SCEWIN"];
+    private string Cache => Path.Combine(data, "power-catalogue.json");
+    private bool AdvancedPage => page == "Advanced";
+    private bool Nvidia => NvidiaTab.IsChecked == true;
 
     public MainWindow()
     {
         var args = Environment.GetCommandLineArgs();
         smokePath = args.Length >= 3 && args[1] == "--ui-smoke" ? Path.GetFullPath(args[2]) : null;
-        data = smokePath is null ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "UK11Ultimate") : Path.Combine(Path.GetTempPath(), "UK11UiSmoke-" + Guid.NewGuid());
-        engine = new(new WindowsSettings(), Path.Combine(data, "backups"));
+        // Retain the established data directory so a rebrand cannot orphan existing originals.
+        data = smokePath is null ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "UK11Ultimate") : Path.Combine(Path.GetTempPath(), "ApexSmoke-" + Guid.NewGuid());
+        engine = new(new WindowsSettings(), Path.Combine(data, "backups")); workflows = new(data);
+        if (args.Length >= 3 && args[1] == "--restart-from" && int.TryParse(args[2], out var previousId))
+        { try { using var previous = Process.GetProcessById(previousId); previous.WaitForExit(10000); } catch (ArgumentException) { } }
         InitializeComponent();
+        try { Directory.CreateDirectory(data); instance = new(Path.Combine(data, "instance.lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None); }
+        catch (Exception ex) { MessageBox.Show("Apex is already open or cannot access its backups: " + ex.Message); Application.Current.Shutdown(); return; }
         try
         {
-            Directory.CreateDirectory(data);
-            instance = new FileStream(Path.Combine(data, "instance.lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+            if (File.Exists(Cache)) allTweaks.AddRange((JsonSerializer.Deserialize<List<Tweak>>(File.ReadAllText(Cache)) ?? []).Where(ValidPowerIdentity));
+            var prefs = PreferenceFile.Load(Path.Combine(data, "settings.json")); Search.Text = prefs.Search;
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        { MessageBox.Show("UK11 is already open or its data directory is unavailable: " + ex.Message); Application.Current.Shutdown(); return; }
-        Categories.ItemsSource = new[] { "All categories" }.Concat(Catalog.All.Select(t => t.Category).Append("Power configuration").Distinct().Order()).ToArray();
-        States.ItemsSource = new[] { "All states", "Available", "At target", "Unavailable", "Favourites" };
-        Categories.SelectedIndex = States.SelectedIndex = 0;
-        try
-        {
-            var prefs = PreferenceFile.Load(Path.Combine(data, "settings.json"));
-            Search.Text = prefs.Search;
-            foreach (var id in prefs.Favorites ?? []) favorites.Add(id);
-            if (Categories.Items.Contains(prefs.Category)) Categories.SelectedItem = prefs.Category;
-            page = prefs.Page;
-            if (File.Exists(PowerCache))
-            {
-                var saved = JsonSerializer.Deserialize<List<Tweak>>(File.ReadAllText(PowerCache)) ?? [];
-                catalogue.AddRange(saved.Where(t => t.Adjustable && ValidIdentity(t)));
-            }
-        }
-        catch (Exception ex) { SetStatus("Saved preferences or power catalogue could not load: " + ex.Message, true); }
-        initialized = true;
-        ShowPage(page);
+        catch (Exception ex) { Status.Text = "Saved settings need attention: " + ex.Message; }
+        ready = true;
         Loaded += async (_, _) =>
         {
-            await Rescan();
-            Sample(); cpu.Sample(); timer.Start();
+            await RefreshSystem(); await Sample(); timer.Start();
             if (smokePath is not null)
             {
-                try { await SmokeTest(); Application.Current.Shutdown(0); }
+                try { await Smoke(); Application.Current.Shutdown(0); }
                 catch (Exception ex) { File.WriteAllText(smokePath + ".error.txt", ex.ToString()); Application.Current.Shutdown(1); }
             }
         };
-        timer.Tick += (_, _) => Sample();
-        Closing += (_, e) =>
-        {
-            if (busy) { e.Cancel = true; return; }
-            timer.Stop(); SavePreferences();
-        };
-        Closed += (_, _) =>
-        {
-            instance?.Dispose();
-            if (smokePath is not null && Directory.Exists(data)) Directory.Delete(data, true);
-        };
+        timer.Tick += async (_, _) => await Sample();
+        Closing += (_, e) => { if (busy) { e.Cancel = true; return; } timer.Stop(); try { PreferenceFile.Save(Path.Combine(data, "settings.json"), new(Search.Text, page)); } catch { } };
+        Closed += (_, _) => { closed = true; instance?.Dispose(); sensors.Dispose(); if (smokePath is not null && Directory.Exists(data)) Directory.Delete(data, true); };
     }
-    private static bool ValidIdentity(Tweak t) => Guid.TryParse(t.Scheme, out var s) && Guid.TryParse(t.Path, out var g) && Guid.TryParse(t.Name, out var n)
-        && t.Id == $"power.{s:N}.{g:N}.{n:N}.{(t.Backend == "PowerAC" ? "ac" : "dc")}";
-    private async Task Rescan()
+    private static bool ValidPowerIdentity(Tweak t) => t.Adjustable && Guid.TryParse(t.Scheme, out var s) && Guid.TryParse(t.Path, out var g) && Guid.TryParse(t.Name, out var n) && t.Id == $"power.{s:N}.{g:N}.{n:N}.{(t.Backend == "PowerAC" ? "ac" : "dc")}";
+    private void SetStatus(string message, bool error = false) { Status.Text = message; Status.ToolTip = message; StatusDot.Fill = error ? Brushes.Orange : Brushes.DodgerBlue; }
+    private void SetBusy(bool value) { busy = value; Navigation.IsEnabled = ContentHost.IsEnabled = BulkButtons.IsEnabled = RefreshButton.IsEnabled = !value; }
+    private async Task<WorkflowResult?> Workflow(string action, object? payload = null, bool admin = false)
     {
-        if (busy) return;
-        SetBusy(true); SetStatus("Reading hardware, stored values and Windows power capabilities…");
+        if (busy) return null;
+        SetBusy(true); SetStatus("Working… " + action.Replace('-', ' '));
         try
         {
-            var h = await Task.Run(Hardware.Inventory);
-            CpuName.Text = h.Cpu; BoardName.Text = h.Board; FirmwareName.Text = h.Firmware; OsName.Text = h.Os;
-            ThreadText.Text = h.Threads + " logical processors";
-            string? warning = null;
-            try
-            {
-                var discovered = await Task.Run(() => PowerSettings.Discover());
-                // Preserve descriptors with unresolved originals from previously active power plans.
-                var retained = catalogue.Where(t => t.Adjustable && engine.GetBackup(t) is { State: not "Restored" });
-                catalogue = Catalog.All.Concat(discovered).Concat(retained).DistinctBy(t => t.Id).ToList();
-                File.WriteAllText(PowerCache + ".tmp", JsonSerializer.Serialize(catalogue.Where(t => t.Adjustable)));
-                File.Move(PowerCache + ".tmp", PowerCache, true);
-                PlanName.Text = PowerSettings.ActiveName();
-            }
-            catch (Exception ex) { warning = "Power discovery incomplete: " + ex.Message; PlanName.Text = "Unavailable"; }
-            RefreshRows();
-            SetStatus(warning ?? "Scan complete · No changes made", warning is not null);
+            var result = await workflows.RunAsync(action, payload, admin);
+            if (!result.Success) { if (smokePath is not null) throw new InvalidOperationException(action + ": " + result.Error); SetStatus(result.Error ?? "Windows operation failed", true); MessageBox.Show(this, result.Error, "Apex Tweaks"); return null; }
+            var message = result.Data.Text("message");
+            var failed = result.Data.ValueKind == JsonValueKind.Object && result.Data.TryGetProperty("failed", out var f) ? f.Items() : [];
+            SetStatus(string.IsNullOrEmpty(message) ? "Windows operation completed." : message, failed.Length > 0);
+            if (failed.Length > 0) MessageBox.Show(this, string.Join("\n", failed.Select(x => x.ToString())), "Some operations failed");
+            return result;
         }
-        catch (Exception ex) { SetStatus("Scan failed: " + ex.Message, true); }
+        catch (System.ComponentModel.Win32Exception ex) when (ex.NativeErrorCode == 1223) { SetStatus("Administrator request cancelled. No workflow was started."); return null; }
+        catch (Exception ex) { if (smokePath is not null) throw; SetStatus(ex.Message, true); MessageBox.Show(this, ex.Message, "Apex Tweaks"); return null; }
         finally { SetBusy(false); }
     }
-    private void Sample()
-    {
-        try
-        {
-            var m = Hardware.Memory(); var used = m.Total - m.Available;
-            var percent = 100d * used / m.Total;
-            MemoryText.Text = $"{used / 1073741824d:F1} / {m.Total / 1073741824d:F1} GiB";
-            MemoryPercent.Text = $"{percent:F0}% used";
-            Push(memoryHistory, percent); Draw(MemoryLine, MemoryCanvas, memoryHistory);
-            var load = cpu.Sample();
-            if (load is not null) { CpuText.Text = $"{load:F1}%"; Push(cpuHistory, load.Value); Draw(CpuLine, CpuCanvas, cpuHistory); }
-            Uptime.Text = $"Uptime {TimeSpan.FromMilliseconds(Environment.TickCount64):d\\.hh\\:mm\\:ss} · physical RAM";
-        }
-        catch (Exception ex) { SetStatus("Telemetry unavailable: " + ex.Message, true); }
-    }
-    private static void Push(List<double> values, double value) { values.Add(value); if (values.Count > 60) values.RemoveAt(0); }
-    private static void Draw(System.Windows.Shapes.Polyline line, Canvas canvas, List<double> values)
-    {
-        var width = Math.Max(1, canvas.ActualWidth); var height = canvas.Height;
-        line.Points = new PointCollection(values.Select((v, i) => new Point(i * width / Math.Max(1, values.Count - 1), 2 + (height - 4) * (1 - v / 100))));
-    }
-    private void RefreshRows()
-    {
-        var selectedIds = rows.Where(r => r.Selected).Select(r => r.Tweak.Id).ToHashSet();
-        var currentId = Selected?.Tweak.Id;
-        rows = catalogue.Select(t =>
-        {
-            try { return new SettingRow(t, engine.Inspect(t), engine.GetBackup(t), favorites.Contains(t.Id)); }
-            catch (Exception ex) { return new SettingRow(t, new(false, false, new(false), ex.Message), null, favorites.Contains(t.Id), ex.Message); }
-        }).ToList();
-        foreach (var r in rows)
-        {
-            r.Selected = selectedIds.Contains(r.Tweak.Id) && r.CanSelect;
-            r.PropertyChanged += (_, e) => { if (e.PropertyName == nameof(SettingRow.Selected)) UpdateSelectionCount(); };
-        }
-        CatalogueTotal.Text = rows.Count.ToString();
-        CatalogueBreakdown.Text = $"{Catalog.All.Count} Windows preferences\n{rows.Count(r => r.Tweak.Adjustable)} AC/DC power targets\nNo benchmark claims";
-        AvailableCount.Text = rows.Count(r => !r.Tweak.Adjustable && r.Inspection.Supported).ToString();
-        BackupCount.Text = rows.Count(r => r.CanRestore).ToString();
-        BackupList.ItemsSource = rows.Where(r => r.Backup is not null).OrderByDescending(r => r.Backup!.Created).ToList();
-        FilterRows(currentId);
-        try
-        {
-            var log = Path.Combine(data, "backups", "transactions.log");
-            Activity.Text = File.Exists(log) ? string.Join(Environment.NewLine, File.ReadLines(log).TakeLast(80)) : "No changes recorded. Your original values will appear here after applying a setting.";
-        }
-        catch (Exception ex) { Activity.Text = "Activity log unavailable: " + ex.Message; }
-    }
-    private void FilterRows(string? selectedId = null)
-    {
-        if (!initialized) return;
-        selectedId ??= Selected?.Tweak.Id;
-        var category = Categories.SelectedItem?.ToString() ?? "All categories";
-        var state = States.SelectedItem?.ToString() ?? "All states";
-        var visible = rows.Where(r => (category == "All categories" || r.Tweak.Category == category)
-            && $"{r.Title} {r.Tweak.Effect} {r.CategoryLabel} {r.Tweak.Id}".Contains(Search.Text.Trim(), StringComparison.OrdinalIgnoreCase)
-            && (state switch { "Available" => r.CanApply, "At target" => !r.Tweak.Adjustable && r.Inspection.Applied, "Unavailable" => !r.Inspection.Supported, "Favourites" => r.Favorite, _ => true }))
-            .OrderBy(r => r.Tweak.Category).ThenBy(r => r.Title).ToList();
-        TweakList.ItemsSource = visible;
-        TweakList.SelectedItem = visible.FirstOrDefault(r => r.Tweak.Id == selectedId) ?? visible.FirstOrDefault();
-        if (TweakList.SelectedItem is not null) TweakList.ScrollIntoView(TweakList.SelectedItem);
-        ResultCount.Text = $"{visible.Count} of {rows.Count} targets";
-        UpdateSelectionCount(); ShowDetail();
-    }
-    private void UpdateSelectionCount()
-    {
-        if (!initialized) return;
-        var n = rows.Count(r => r.Selected);
-        SelectionCount.Text = n == 0 ? "Select preferences to review as a batch" : $"{n} preference{(n == 1 ? "" : "s")} selected";
-        ReviewButton.IsEnabled = n > 0 && !busy;
-    }
-    private void ShowDetail()
-    {
-        if (!initialized) return;
-        var r = Selected;
-        ApplyButton.IsEnabled = r?.CanApply == true && (!r.Inspection.Applied || r.Tweak.Adjustable) && !busy;
-        RestoreButton.IsEnabled = r?.CanRestore == true && !busy;
-        TargetChoices.Visibility = TargetNumber.Visibility = Visibility.Collapsed;
-        if (r is null) { DetailTitle.Text = "No matching settings"; DetailCategory.Text = "Adjust your filters to explore the library."; DetailEffect.Text = DetailCurrent.Text = DetailRisk.Text = DetailEvidence.Text = DetailRestart.Text = DetailPath.Text = TargetLabel.Text = RangeText.Text = ""; return; }
-        var t = r.Tweak;
-        DetailTitle.Text = t.Title; DetailTitle.ToolTip = t.Title; DetailCategory.Text = r.CategoryLabel;
-        DetailCurrent.Text = r.Inspection.Current.Exists ? t.Format(r.Inspection.Current.Number) : "Unavailable";
-        DetailEffect.Text = r.Error ?? t.Effect; DetailRisk.Text = t.Risk; DetailEvidence.Text = t.Evidence; DetailRestart.Text = t.Restart;
-        DetailPath.Text = t.Adjustable ? $"{t.Backend}\nPlan: {t.Scheme}\nGroup: {t.Path}\nSetting: {t.Name}\n{t.Id}" : $"HKCU\\{t.Path}\\{t.Name}\nDWORD → {t.Desired}\n{t.Id}";
-        TargetLabel.Text = t.Adjustable ? "Choose a Windows-reported value" : t.Format(t.Desired);
-        RangeText.Text = t.Support;
-        if (t.Adjustable && t.Choices.Length > 0)
-        {
-            TargetChoices.ItemsSource = t.Choices;
-            TargetChoices.SelectedItem = t.Choices.FirstOrDefault(c => c.Number == r.Inspection.Current.Number);
-            TargetChoices.Visibility = Visibility.Visible;
-        }
-        else if (t.Adjustable)
-        {
-            TargetNumber.Text = unchecked((uint)r.Inspection.Current.Number).ToString();
-            TargetNumber.Visibility = Visibility.Visible;
-            RangeText.Text = $"Range {t.Minimum}–{t.Maximum} · step {t.Increment} {t.Units}\n" + (t.Writable ? "Only valid OS-reported values accepted." : "No writable range was reported.");
-        }
-    }
-    private void ShowPage(string requested)
-    {
-        if (!initialized) return;
-        page = requested is "Optimisations" or "Backups" ? requested : "Dashboard";
-        DashboardPanel.Visibility = page == "Dashboard" ? Visibility.Visible : Visibility.Collapsed;
-        TweaksPanel.Visibility = page == "Optimisations" ? Visibility.Visible : Visibility.Collapsed;
-        BackupsPanel.Visibility = page == "Backups" ? Visibility.Visible : Visibility.Collapsed;
-        OverviewNav.IsChecked = page == "Dashboard"; CatalogueNav.IsChecked = page == "Optimisations"; RecoveryNav.IsChecked = page == "Backups";
-        Heading.Text = page == "Dashboard" ? "Your system. In focus." : page == "Backups" ? "A clear path back." : "Your optimisation library.";
-        Subheading.Text = page == "Dashboard" ? "Live readings. Deliberate changes. Complete control." : page == "Backups" ? "Exact originals, verified restoration, and a visible audit trail." : "Explore preferences and hardware-exposed controls. Review before applying.";
-    }
-    private void SetBusy(bool value) { busy = value; RescanButton.IsEnabled = !value; UpdateSelectionCount(); ShowDetail(); }
-    private void SetStatus(string text, bool error = false) { Status.Text = text; Status.ToolTip = text; StatusDot.Fill = error ? Brushes.Salmon : Brushes.MediumAquamarine; }
-    private void SavePreferences()
-    {
-        if (!initialized) return;
-        try { PreferenceFile.Save(Path.Combine(data, "settings.json"), new(Search.Text, page, favorites.Order().ToArray(), Categories.SelectedItem?.ToString() ?? "All categories")); }
-        catch (Exception ex) { SetStatus("Could not save preferences: " + ex.Message, true); }
-    }
-    private bool Confirm(string title, IReadOnlyList<(Tweak Tweak, string Change)> changes, string note)
-    {
-        var dialog = new Window { Owner = this, Title = title, Width = 680, Height = 640, MinWidth = 540, MinHeight = 440, Background = new SolidColorBrush(Color.FromRgb(12, 19, 31)), WindowStartupLocation = WindowStartupLocation.CenterOwner, FontFamily = FontFamily };
-        var grid = new Grid { Margin = new(26) }; grid.RowDefinitions.Add(new() { Height = GridLength.Auto }); grid.RowDefinitions.Add(new()); grid.RowDefinitions.Add(new() { Height = GridLength.Auto });
-        var header = new StackPanel(); header.Children.Add(new TextBlock { Text = title, FontSize = 24, FontWeight = FontWeights.SemiBold }); header.Children.Add(new TextBlock { Text = note, Foreground = Brushes.LightSlateGray, Margin = new(0, 12, 0, 20) }); grid.Children.Add(header);
-        var body = new StackPanel();
-        foreach (var (t, change) in changes)
-        {
-            var block = new StackPanel(); block.Children.Add(new TextBlock { Text = t.Title, FontSize = 15, FontWeight = FontWeights.SemiBold });
-            block.Children.Add(new TextBlock { Text = change + "\n" + t.Risk + "\n" + t.Restart, Foreground = Brushes.LightSteelBlue, Margin = new(0, 8, 0, 0) });
-            block.Children.Add(new TextBlock { Text = t.Effect, Foreground = Brushes.SlateGray, Margin = new(0, 8, 0, 0) });
-            body.Children.Add(new Border { Background = new SolidColorBrush(Color.FromRgb(20, 32, 48)), CornerRadius = new(10), Padding = new(18), Margin = new(0, 0, 0, 12), Child = block });
-        }
-        var scroll = new ScrollViewer { Content = body, VerticalScrollBarVisibility = ScrollBarVisibility.Auto }; Grid.SetRow(scroll, 1); grid.Children.Add(scroll);
-        var buttons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, Margin = new(0, 20, 0, 0) };
-        var cancel = new Button { Content = "Cancel", IsCancel = true, Margin = new(0, 0, 10, 0) }; cancel.Click += (_, _) => dialog.DialogResult = false;
-        var confirm = new Button { Content = "Confirm " + (title.Contains("restore", StringComparison.OrdinalIgnoreCase) ? "restore" : "changes"), Style = (Style)FindResource("Primary") }; confirm.Click += (_, _) => dialog.DialogResult = true;
-        buttons.Children.Add(cancel); buttons.Children.Add(confirm); Grid.SetRow(buttons, 2); grid.Children.Add(buttons); dialog.Content = grid;
-        return dialog.ShowDialog() == true;
-    }
-    private async Task Apply(IReadOnlyList<Tweak> targets)
-    {
-        if (busy || targets.Count == 0) return;
-        (Tweak, string)[] preview;
-        Dictionary<string, Value> before;
-        try
-        {
-            before = targets.ToDictionary(t => t.Id, t => engine.Inspect(t).Current);
-            preview = targets.Select(t => (t, $"Current: {t.Format(before[t.Id].Number)} → Target: {t.Format(t.Desired)}")).ToArray();
-        }
-        catch (Exception ex) { SetStatus("Preview could not read the current setting: " + ex.Message, true); return; }
-        if (!Confirm("Review configuration changes", preview, "Original values are saved before writes. Every result is read back. If a batch fails, changes attempted in that batch are restored where possible.")) return;
-        SetBusy(true);
-        try
-        {
-            var changed = await Task.Run(() => engine.ApplyBatch(targets, (n, total, title) => Dispatcher.Invoke(() => SetStatus($"Applying {n}/{total} · {title}")), before));
-            SetStatus($"{changed} stored setting(s) verified · Follow each setting's refresh guidance");
-        }
-        catch (Exception ex) { SetStatus(ex.Message, true); MessageBox.Show(this, ex.Message, "Configuration needs attention"); }
-        finally { SetBusy(false); RefreshRows(); }
-    }
-    private async Task Restore(IReadOnlyList<SettingRow> targets)
+    private async Task RefreshSystem()
     {
         if (busy) return;
-        if (targets.Count == 0) { SetStatus("No pending original values to restore."); return; }
-        if (!Confirm("Review restore", targets.Select(r => (r.Tweak, $"Current: {r.Tweak.Format(r.Inspection.Current.Number)} → Original: {r.Tweak.Format(r.Backup!.Original.Number)}")).ToArray(), "Restore only UK11's saved originals. Conflicting external values are preserved and reported; other settings continue restoring.")) return;
+        SetBusy(true); SetStatus("Detecting your system and supported tweaks…");
+        try
+        {
+            var machine = await Task.Run(Hardware.Inventory); CpuName.Text = machine.Cpu;
+            GpuName.Text = await Task.Run(Sensors.GpuIdentity);
+            var found = await Task.Run(() => PowerSettings.Discover());
+            advanced = await Task.Run(() => AdvancedCatalog.Build(found).ToList());
+            var retained = allTweaks.Where(t => t.Adjustable && engine.GetBackup(t) is { State: not "Restored" }).ToArray();
+            allTweaks = Catalog.All.Concat(advanced).Concat(retained).DistinctBy(t => t.Id).ToList();
+            File.WriteAllText(Cache + ".tmp", JsonSerializer.Serialize(allTweaks.Where(t => t.Adjustable))); File.Move(Cache + ".tmp", Cache, true);
+            PlanName.Text = "Power plan · " + PowerSettings.ActiveName();
+            var drive = new DriveInfo(Path.GetPathRoot(Environment.SystemDirectory)!);
+            DiskInfo.Text = $"{(drive.TotalSize - drive.AvailableFreeSpace) / 1073741824d:F0} / {drive.TotalSize / 1073741824d:F0} GB used";
+            DiskBar.Value = 100d * (drive.TotalSize - drive.AvailableFreeSpace) / drive.TotalSize;
+            BuildToggles(); UpdateBackups(); SetStatus("Ready · General and Advanced preserve your original values.");
+        }
+        catch (Exception ex) { SetStatus("Some system data is unavailable: " + ex.Message, true); BuildToggles(); }
+        finally { SetBusy(false); }
+    }
+    private async Task Sample()
+    {
+        if (sampling || closed) return;
+        sampling = true;
+        try
+        {
+            var memory = Hardware.Memory(); var ram = 100d * (memory.Total - memory.Available) / memory.Total;
+            RamUsage.Text = $"{ram:F0}%"; RamGauge.Value = ram; MemoryInfo.Text = $"RAM · {memory.Total / 1073741824d:F1} GiB installed";
+            var load = cpu.Sample(); if (load is not null) { CpuUsage.Text = $"{load:F0}%"; CpuGauge.Value = load.Value; }
+            var reading = await Task.Run(sensors.Read); if (closed) return;
+            latest = reading; GpuUsage.Text = reading.GpuLoad is null ? "N/A" : $"{reading.GpuLoad:F0}%"; GpuGauge.Value = reading.GpuLoad ?? double.NaN;
+            Push(cpuTemperatures, reading.CpuTemperature); Push(gpuTemperatures, reading.GpuTemperature); UpdateTemperature();
+        }
+        catch (Exception ex) { if (!closed) SetStatus("Telemetry unavailable: " + ex.Message, true); }
+        finally { sampling = false; }
+    }
+    private static void Push(List<double?> points, double? value) { points.Add(value); if (points.Count > 60) points.RemoveAt(0); }
+    private void UpdateTemperature()
+    {
+        var gpu = GpuTempTab.IsChecked == true; var value = gpu ? latest.GpuTemperature : latest.CpuTemperature;
+        TemperatureKind.Text = gpu ? "GPU" : "CPU"; TemperatureValue.Text = value is null ? "Unavailable" : $"{value:F0}°C";
+        SensorStatus.Text = value is null ? (gpu ? "No compatible GPU sensor data is available." : latest.Status) : (gpu ? latest.GpuName + " · " + latest.GpuSensor : latest.CpuSensor);
+        TemperaturePlot.Update(gpu ? gpuTemperatures : cpuTemperatures);
+    }
+    private IEnumerable<Tweak> SectionTweaks() => AdvancedPage ? advanced.Where(t => t.Backend == (DcTab.IsChecked == true ? "PowerDC" : "PowerAC")) : Catalog.All;
+    private void BuildToggles()
+    {
+        if (!ready) return;
+        var source = SectionTweaks().Where(t => t.Title.Contains(Search.Text.Trim(), StringComparison.OrdinalIgnoreCase)).ToArray();
+        var items = source.Select(t =>
+        {
+            try
+            {
+                var state = engine.Inspect(t); var backup = engine.GetBackup(t); var owned = backup is { State: not "Restored" };
+                var enabled = state.Supported && t.Writable && (state.Applied ? owned : !owned);
+                var hint = !state.Supported ? "Unavailable on this Windows configuration. " + t.Support : !t.Writable ? "No validated target default is available. " + t.Effect : state.Applied && !owned ? "Already set outside Apex. No original was invented; this switch is read-only. " + t.Effect : owned && !state.Applied ? "An older original is saved. Use Revert all before applying a different target. " + t.Effect : t.Effect + "\n" + t.Restart;
+                return new ToggleItem(t, t.Title, state.Applied, enabled, hint);
+            }
+            catch (Exception ex) { return new ToggleItem(t, t.Title, false, false, ex.Message); }
+        }).ToArray();
+        ToggleList.ItemsSource = items;
+        TweakCount.Text = $"{items.Count(x => x.Enabled)} changeable · {items.Length} shown · Hover a name for its effect and compatibility";
+        if (AdvancedPage) TweakCount.Text = $"{advanced.Count} AC/DC controls in this catalogue · Showing {(DcTab.IsChecked == true ? "battery" : "plugged-in")} settings · Heat and power use can increase";
+    }
+    private void UpdateBackups()
+    {
+        var count = allTweaks.Count(t => { try { return engine.GetBackup(t) is { State: not "Restored" }; } catch { return false; } });
+        BackupSummary.Text = $"{count} General / Advanced original value(s) are ready to restore. Revert restores originals, not guessed factory values.";
+    }
+    private async Task ShowPage(string selected)
+    {
+        if (!ready || busy) return;
+        page = pageNames.Contains(selected) ? selected : "Home";
+        foreach (var p in new UIElement[] { HomePanel, TweaksPanel, RestorePanel, DriversPanel, DebloatPanel, NetworkPanel, ServicesPanel, BiosPanel }) p.Visibility = Visibility.Collapsed;
+        (page switch { "General" or "Advanced" => (UIElement)TweaksPanel, "System Restore" => RestorePanel, "Drivers" => DriversPanel, "Debloating" => DebloatPanel, "Networking" => NetworkPanel, "Services" => ServicesPanel, "BIOS / SCEWIN" => BiosPanel, _ => HomePanel }).Visibility = Visibility.Visible;
+        Breadcrumb.Text = "⌂   /   " + page; PageTitle.Text = page == "Home" ? "Welcome to Apex Tweaks" : page;
+        PageSubtitle.Text = page switch { "Home" => "Performance, configuration and recovery — made simple.", "General" => "45 Windows preferences. One switch per change.", "Advanced" => "Windows High Performance defaults for supported controls. Review heat and battery trade-offs.", "Drivers" => "Official, hardware-compatible updates with visible results.", "BIOS / SCEWIN" => "Hardware-aware firmware information. Compatibility comes first.", _ => "Real Windows operations. Clear results and recovery." };
+        BulkButtons.Visibility = page is "General" or "Advanced" ? Visibility.Visible : Visibility.Collapsed;
+        RefreshButton.Visibility = page is "General" or "Advanced" ? Visibility.Collapsed : Visibility.Visible;
+        PowerSides.Visibility = AdvancedPage ? Visibility.Visible : Visibility.Collapsed;
+        var navs = new[] { HomeNav, RestoreNav, DriversNav, GeneralNav, DebloatNav, NetworkNav, AdvancedNav, ServicesNav, BiosNav };
+        for (var i = 0; i < pageNames.Length; i++) navs[i].IsChecked = pageNames[i] == page;
+        if (page is "General" or "Advanced") BuildToggles();
+        else if (page == "System Restore") await LoadRestore();
+        else if (page is "Drivers" or "BIOS / SCEWIN") await LoadSystemDetails();
+        else if (page == "Debloating") await LoadApps();
+        else if (page == "Networking") await LoadNetwork();
+        else if (page == "Services") await LoadServices();
+    }
+    private bool Confirm(string title, string message)
+    {
+        var dialog = new Window { Owner = this, Title = title, Width = 640, Height = 550, MinWidth = 500, MinHeight = 360, WindowStartupLocation = WindowStartupLocation.CenterOwner, Background = new SolidColorBrush(Color.FromRgb(19, 22, 28)), FontFamily = FontFamily };
+        var grid = new Grid { Margin = new(24) }; grid.RowDefinitions.Add(new() { Height = GridLength.Auto }); grid.RowDefinitions.Add(new()); grid.RowDefinitions.Add(new() { Height = GridLength.Auto });
+        grid.Children.Add(new TextBlock { Text = title, FontSize = 22, FontWeight = FontWeights.SemiBold, Margin = new(0, 0, 0, 18) });
+        var content = new ScrollViewer { VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Content = new TextBlock { Text = message, Foreground = Brushes.LightSteelBlue, FontSize = 13 } }; Grid.SetRow(content, 1); grid.Children.Add(content);
+        var buttons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, Margin = new(0, 20, 0, 0) };
+        var cancel = new Button { Content = "Cancel", IsCancel = true, Margin = new(0, 0, 10, 0) }; cancel.Click += (_, _) => dialog.DialogResult = false;
+        var apply = new Button { Content = "Confirm", Style = (Style)FindResource("Primary") }; apply.Click += (_, _) => dialog.DialogResult = true;
+        buttons.Children.Add(cancel); buttons.Children.Add(apply); Grid.SetRow(buttons, 2); grid.Children.Add(buttons); dialog.Content = grid;
+        return dialog.ShowDialog() == true;
+    }
+    private async Task ChangeTweaks(IReadOnlyList<Tweak> targets, bool restore, bool confirm)
+    {
+        if (busy || targets.Count == 0) { SetStatus("No applicable changes or saved originals in this selection."); return; }
+        Dictionary<string, Value> before;
+        try { before = targets.ToDictionary(t => t.Id, t => engine.Inspect(t).Current); }
+        catch (Exception ex) { SetStatus(ex.Message, true); return; }
+        if (confirm && !Confirm(restore ? "Revert all saved tweaks?" : "Apply section tweaks?", string.Join("\n", targets.Select(t => "• " + t.Title)) + "\n\n" + (restore ? "Apex restores its recorded originals and preserves conflicting external values. Apps, drivers, services and DNS use separate recovery controls." : "Original values are saved before writes. Every result is read back. A failure triggers reverse-order recovery of this batch. Advanced performance defaults can increase heat, fan activity and battery drain; benchmark your own workload."))) return;
         SetBusy(true);
         try
         {
-            var errors = new List<string>(); var restored = 0;
-            await Task.Run(() => { foreach (var r in targets) { try { engine.Restore(r.Tweak); restored++; } catch (Exception ex) { errors.Add(r.Title + ": " + ex.Message); } } });
-            SetStatus($"{restored} original value(s) restored" + (errors.Count > 0 ? $" · {errors.Count} need attention" : " · Registry/API read-back verified"), errors.Count > 0);
-            if (errors.Count > 0) MessageBox.Show(this, string.Join("\n\n", errors), "Restore conflicts or failures");
+            if (restore)
+            {
+                var errors = new List<string>(); var count = 0;
+                await Task.Run(() => { foreach (var t in targets) { try { engine.Restore(t); count++; } catch (Exception ex) { errors.Add(t.Title + ": " + ex.Message); } } });
+                SetStatus($"{count} original value(s) restored" + (errors.Count > 0 ? $" · {errors.Count} conflicts/failures" : " and verified."), errors.Count > 0);
+                if (errors.Count > 0) MessageBox.Show(this, string.Join("\n\n", errors), "Revert needs attention");
+            }
+            else { var count = await Task.Run(() => engine.ApplyBatch(targets, expected: before)); SetStatus($"{count} tweak(s) applied and verified. Some settings need sign-out or reopening apps."); }
         }
-        finally { SetBusy(false); RefreshRows(); }
+        catch (Exception ex) { SetStatus(ex.Message, true); MessageBox.Show(this, ex.Message, "Apex Tweaks"); }
+        finally { SetBusy(false); BuildToggles(); UpdateBackups(); }
     }
-    private void DashboardClick(object sender, RoutedEventArgs e) => ShowPage("Dashboard");
-    private void TweaksClick(object sender, RoutedEventArgs e) => ShowPage("Optimisations");
-    private void BackupsClick(object sender, RoutedEventArgs e) => ShowPage("Backups");
-    private async void RefreshClick(object sender, RoutedEventArgs e) => await Rescan();
-    private void SearchChanged(object sender, TextChangedEventArgs e) => FilterRows("");
-    private void FilterChanged(object sender, SelectionChangedEventArgs e) => FilterRows("");
-    private void TweakSelectionChanged(object sender, SelectionChangedEventArgs e) => ShowDetail();
-    private void SelectionChecked(object sender, RoutedEventArgs e) => UpdateSelectionCount();
-    private void FavoritesClick(object sender, RoutedEventArgs e) { Categories.SelectedIndex = 0; States.SelectedItem = "Favourites"; ShowPage("Optimisations"); }
-    private void CategoryShortcut(object sender, RoutedEventArgs e) { Categories.SelectedItem = ((Button)sender).Tag; States.SelectedIndex = 0; ShowPage("Optimisations"); }
-    private void StarClick(object sender, RoutedEventArgs e)
+    private async void ToggleClick(object sender, RoutedEventArgs e)
     {
-        if (((Button)sender).Tag is not SettingRow r) return;
-        r.Favorite = !r.Favorite;
-        if (r.Favorite) favorites.Add(r.Tweak.Id); else favorites.Remove(r.Tweak.Id);
-        SavePreferences(); if (States.SelectedItem?.ToString() == "Favourites") FilterRows();
-    }
-    private async void ReviewClick(object sender, RoutedEventArgs e) => await Apply(rows.Where(r => r.Selected && r.CanSelect).Select(r => r.Tweak).ToArray());
-    private async void ApplyDetailClick(object sender, RoutedEventArgs e)
-    {
-        if (Selected is not { CanApply: true } r) return;
-        var t = r.Tweak;
-        if (t.Adjustable)
+        if (((ToggleButton)sender).Tag is not ToggleItem item || busy) return;
+        var turnOn = ((ToggleButton)sender).IsChecked == true;
+        if (item.Kind == "service")
         {
-            int desired;
-            if (t.Choices.Length > 0 && TargetChoices.SelectedItem is Choice choice) desired = choice.Number;
-            else if (t.Choices.Length == 0 && uint.TryParse(TargetNumber.Text, out var n)) desired = unchecked((int)n);
-            else { SetStatus("Choose a valid OS-reported option or whole number.", true); return; }
-            if (!t.Accepts(desired)) { SetStatus("That value is outside the allowed range or increment.", true); return; }
-            t = t with { Desired = desired };
+            if (!Confirm(turnOn ? "Disable optional component?" : "Restore optional component?", item.Name + "\n\n" + item.Hint)) { await LoadServices(); return; }
+            await Workflow(item.Key == "MicrosoftStore" ? "store-change" : "service-change", new { name = item.Key, disable = turnOn }, true); await LoadServices(); return;
         }
-        try { await Apply([t]); } catch (Exception ex) { SetStatus(ex.Message, true); }
+        if (item.Tweak is not { } t) return;
+        if (t.Adjustable && turnOn && !Confirm("Enable performance default?", t.Title + "\n\n" + t.Effect + "\nTarget: " + t.Format(t.Desired))) { BuildToggles(); return; }
+        await ChangeTweaks([t], !turnOn, false);
     }
-    private async void RestoreDetailClick(object sender, RoutedEventArgs e) { if (Selected is { CanRestore: true } r) await Restore([r]); }
-    private async void RestoreRowClick(object sender, RoutedEventArgs e) { if (((Button)sender).Tag is SettingRow r) await Restore([r]); }
-    private async void RestoreAllClick(object sender, RoutedEventArgs e) => await Restore(rows.Where(r => r.CanRestore).ToArray());
-    private void CopyClick(object sender, RoutedEventArgs e) { try { Clipboard.SetText(DetailPath.Text); SetStatus("Implementation copied."); } catch (Exception ex) { SetStatus(ex.Message, true); } }
-    private void SourceClick(object sender, RoutedEventArgs e) { if (Selected is null) return; try { Process.Start(new ProcessStartInfo(Selected.Tweak.Source) { UseShellExecute = true }); } catch (Exception ex) { SetStatus(ex.Message, true); } }
+    private async void ApplyAllClick(object sender, RoutedEventArgs e)
+    {
+        var targets = SectionTweaks().Where(t => { try { var state = engine.Inspect(t); return t.Writable && state.Supported && !state.Applied && engine.GetBackup(t) is null or { State: "Restored" }; } catch { return false; } }).ToArray();
+        await ChangeTweaks(targets, false, true);
+    }
+    private async void RevertAllClick(object sender, RoutedEventArgs e)
+    {
+        var originals = allTweaks.Where(t => { try { return engine.GetBackup(t) is { State: not "Restored" }; } catch { return false; } }).ToArray();
+        await ChangeTweaks(originals, true, true);
+    }
+    private async Task LoadRestore()
+    {
+        UpdateBackups(); var result = await Workflow("restore-list"); if (result is null) return;
+        CreateRestoreButton.IsEnabled = result.Data.Flag("available"); RestoreStatus.Text = result.Data.Text("message");
+        RestorePoints.Text = result.Data.TryGetProperty("points", out var points) ? string.Join("\n\n", points.Items().Select(p => p.Text("SequenceNumber") + " · " + p.Text("Description") + "\n" + p.Text("CreationTime"))) : "";
+        if (RestorePoints.Text.Length == 0) RestorePoints.Text = "No restore points are currently reported.";
+    }
+    private async Task LoadSystemDetails()
+    {
+        var result = await Workflow("system"); if (result is null) return; system = result.Data;
+        InstalledGpuDrivers.Text = system.TryGetProperty("gpu", out var devices) ? string.Join("\n", devices.Items().Select(g => g.Text("Name") + " · Driver " + g.Text("DriverVersion"))) : "No graphics device reported.";
+        BiosDetails.Text = $"Motherboard   {system.Text("board")}\nRevision   {system.Text("revision")}\nFirmware vendor   {system.Text("biosVendor")}\nBIOS version   {system.Text("biosVersion")}\nRelease date   {system.Text("biosDate")}\nSecure Boot   {system.Text("secureBoot")}";
+    }
+    private async Task LoadApps()
+    {
+        var result = await Workflow("apps-list"); if (result is null) return;
+        apps = result.Data.Items().Select(a => new AppItem(a.Text("name"), a.Text("fullName"), a.Flag("microsoft"), a.Flag("auto"))).ToList(); FilterApps();
+    }
+    private void FilterApps() => AppList.ItemsSource = apps.Where(a => a.Microsoft == (MicrosoftAppsTab.IsChecked == true)).OrderBy(a => a.Name).ToList();
+    private async Task RemoveApps(IReadOnlyList<AppItem> selected, bool automatic)
+    {
+        if (selected.Count == 0) { SetStatus("No matching optional apps are installed."); return; }
+        if (!Confirm(automatic ? "Auto debloat preview" : "Remove app?", string.Join("\n", selected.Select(a => "• " + a.Name)) + "\n\nOnly these current-user packages will be removed. This is not a reversible tweak toggle: inventory is backed up, but package files can be deleted and reinstall may require Microsoft Store or the original publisher. Save your work first.")) return;
+        await Workflow("apps-remove", new { packages = selected.Select(a => a.FullName).ToArray(), automatic }); await LoadApps();
+    }
+    private async Task LoadNetwork()
+    {
+        var result = await Workflow("network-list"); if (result is null) return;
+        Adapters.ItemsSource = result.Data.Items().Select(a => new AdapterItem(int.Parse(a.Text("index")), a.Text("name"), $"{a.Text("description")}\n{a.Text("status")} · Link {a.Text("speed")}\nIPv4 DNS: {a.GetProperty("dns")} ")).ToList(); Adapters.SelectedIndex = Adapters.Items.Count > 0 ? 0 : -1;
+    }
+    private async Task LoadServices()
+    {
+        var result = await Workflow("service-list"); if (result is null) return;
+        ServiceList.ItemsSource = result.Data.Items().Select(s =>
+        {
+            var name = s.Text("name"); var disabled = s.Text("mode") == "Disabled"; var owned = s.Flag("owned");
+            var hint = name switch { "WSearch" => "Disables indexed search. Searches may be slower.", "SysMain" => "Disables prefetch assistance; performance can get worse.", "Spooler" => "Disables local/network printing and some PDF printers.", "XblGameSave" or "XboxNetApiSvc" => "Xbox networking, cloud saves or multiplayer features can stop working.", "MicrosoftStore" => "Blocks the Store app on supported Enterprise/Education editions. Store infrastructure and Windows Update are preserved.", _ => "This optional feature will be unavailable until restored." };
+            var supported = !s.TryGetProperty("supported", out _) || s.Flag("supported");
+            return new ToggleItem(null, "Disable " + s.Text("title"), disabled || owned, supported && (!disabled || owned), hint + " Current: " + s.Text("status") + " / " + s.Text("mode") + (disabled && !owned ? " Disabled outside Apex; no original exists." : owned ? " Turn off to recover the saved original, including an interrupted operation." : " Original startup mode and running state are backed up before changes."), name, "service");
+        }).ToArray();
+    }
+    private async Task ScanDrivers()
+    {
+        var result = await Workflow("driver-scan"); if (result is null) return;
+        driverUpdates = result.Data.Items().Where(u => (u.Text("manufacturer") + " " + u.Text("title")).Contains(Nvidia ? "NVIDIA" : "AMD", StringComparison.OrdinalIgnoreCase) || !Nvidia && u.Text("manufacturer").Contains("Advanced Micro Devices", StringComparison.OrdinalIgnoreCase))
+            .Select(u => new DriverItem(u.Text("id"), u.Text("title"), u.Text("manufacturer"), u.Text("eula"))).ToList();
+        DriverResults.Text = driverUpdates.Count == 0 ? "Windows Update reports no applicable updates for this vendor. This does not prove the latest vendor release is installed." : string.Join("\n\n", driverUpdates.Select(u => u.Title)); InstallDriversButton.IsEnabled = driverUpdates.Count > 0;
+    }
+    private async void InstallDriversClick(object sender, RoutedEventArgs e)
+    {
+        if (driverUpdates.Count == 0) return;
+        if (!Confirm("Review GPU driver installation", string.Join("\n\n", driverUpdates.Select(u => u.Title + "\n" + u.License)) + "\n\nConfirming accepts these license terms. Apex exports third-party driver packages before installation, attempts a Windows restore point and continues with the driver archive if System Restore is unavailable. Windows Update verifies downloads and hardware applicability. Do not interrupt installation. Reboot is never automatic.")) return;
+        var result = await Workflow("driver-install", new { vendor = Nvidia ? "NVIDIA" : "AMD", ids = driverUpdates.Select(u => u.Id).ToArray(), acceptTerms = true }, true);
+        if (result is not null) DriverResults.Text = JsonSerializer.Serialize(result.Data, new JsonSerializerOptions { WriteIndented = true });
+        InstallDriversButton.IsEnabled = false;
+    }
+    private async void RuntimesClick(object sender, RoutedEventArgs e)
+    {
+        var preview = await Workflow("runtime-preview"); if (preview is null) return;
+        if (!Confirm("Recommended Microsoft runtimes", preview.Data.Text("details") + "\n\nConfirming accepts the displayed package/source terms. Installs or verifies Visual C++ x64/x86, .NET Desktop 8/10 and the DirectX legacy runtime through winget. Installer verification stays enabled; other game runtimes may still be needed.")) return;
+        var result = await Workflow("runtime-install", new { acceptTerms = true }); if (result is not null) DriverResults.Text = JsonSerializer.Serialize(result.Data, new JsonSerializerOptions { WriteIndented = true });
+    }
+    private async void AutoNetworkClick(object sender, RoutedEventArgs e)
+    {
+        if (Adapters.SelectedItem is not AdapterItem adapter) { SetStatus("No physical adapter is available.", true); return; }
+        if (!Confirm("Configure network DNS?", adapter.Name + "\n\nThis sets IPv4 DNS to Cloudflare (1.1.1.1 / 1.0.0.1), flushes the DNS cache and tests name resolution. Original static/DHCP DNS settings are saved. Corporate or VPN networks may require their own DNS. No MTU/TCP guessing or game-ping promise is involved.")) return;
+        await Workflow("network-configure", new { index = adapter.Index }, true); await LoadNetwork();
+    }
+    private async void RestoreNetworkClick(object sender, RoutedEventArgs e) { if (Adapters.SelectedItem is AdapterItem a && Confirm("Restore DNS?", "Restore Apex's saved IPv4 DNS mode for " + a.Name + "? External conflicts are preserved.")) { await Workflow("network-restore", new { index = a.Index }, true); await LoadNetwork(); } }
+    private async void NetworkTestClick(object sender, RoutedEventArgs e)
+    {
+        if (busy) return; SetBusy(true); SetStatus("Testing five ICMP replies from 1.1.1.1…");
+        try
+        {
+            var replies = new List<long>(); var lost = 0; using var ping = new Ping();
+            for (var i = 0; i < 5; i++) { var r = await ping.SendPingAsync("1.1.1.1", 2000); if (r.Status == IPStatus.Success) replies.Add(r.RoundtripTime); else lost++; await Task.Delay(100); }
+            NetworkResults.Text = $"1.1.1.1 · {lost}/5 lost replies" + (replies.Count > 0 ? $"\nAverage {replies.Average():F1} ms · Range {replies.Min()}–{replies.Max()} ms\nMean successive variation {(replies.Count > 1 ? replies.Zip(replies.Skip(1), (a, b) => Math.Abs(a - b)).Average() : 0):F1} ms" : "\nNo ICMP response. Firewall or routing policy may block this test.");
+            SetStatus("Connection test completed. This target is not your game server.");
+        }
+        catch (Exception ex) { NetworkResults.Text = ex.Message; SetStatus("Connection test failed: " + ex.Message, true); }
+        finally { SetBusy(false); }
+    }
+    private async void ReinstallAppClick(object sender, RoutedEventArgs e)
+    {
+        var history = Path.Combine(data, "apps"); if (!Directory.Exists(history)) { SetStatus("No removed-package inventory is saved."); return; }
+        var picker = new OpenFileDialog { InitialDirectory = history, Filter = "Apex package inventory (*.json)|*.json", Title = "Choose the original package inventory" };
+        if (picker.ShowDialog(this) != true) return;
+        try { var b = JsonDocument.Parse(File.ReadAllText(picker.FileName)); var name = b.RootElement.Text("name"); if (Confirm("Reinstall retained package?", name + "\n\nUses the saved original manifest only if its files remain. Otherwise use Microsoft Store or the original publisher.")) await Workflow("apps-reinstall", new { name }); await LoadApps(); }
+        catch (Exception ex) { SetStatus(ex.Message, true); }
+    }
+    private void Launch(string path, bool shell = true) { try { Process.Start(new ProcessStartInfo(path) { UseShellExecute = shell }); } catch (Exception ex) { SetStatus(ex.Message, true); } }
+    private async void NavigateClick(object sender, RoutedEventArgs e) => await ShowPage(((RadioButton)sender).Tag.ToString()!);
+    private async void RefreshClick(object sender, RoutedEventArgs e) { if (page == "Home") await RefreshSystem(); else await ShowPage(page); }
+    private void SearchChanged(object sender, TextChangedEventArgs e) { if (ready) BuildToggles(); }
+    private void PowerSideClick(object sender, RoutedEventArgs e) => BuildToggles();
+    private void TempTabClick(object sender, RoutedEventArgs e) => UpdateTemperature();
+    private void AppTabClick(object sender, RoutedEventArgs e) => FilterApps();
+    private void AdapterChanged(object sender, SelectionChangedEventArgs e) => AdapterDetails.Text = (Adapters.SelectedItem as AdapterItem)?.Detail ?? "No physical network adapter is reported.";
+    private void DriverVendorClick(object sender, RoutedEventArgs e) { driverUpdates.Clear(); DriverResults.Text = "Scan Windows Update for this vendor's applicable drivers."; InstallDriversButton.IsEnabled = false; }
+    private async void ScanDriversClick(object sender, RoutedEventArgs e) => await ScanDrivers();
+    private async void DriverBackupClick(object sender, RoutedEventArgs e) { if (Confirm("Export installed drivers?", "Exports installed third-party driver packages to Apex's local driver-backups folder. Windows UAC approval is required. No drivers will be removed.")) { var r = await Workflow("driver-backup", admin: true); if (r is not null) MessageBox.Show(this, "Driver archive: " + r.Data.Text("path"), "Driver export verified"); } }
+    private void VendorWebsiteClick(object sender, RoutedEventArgs e) => Launch(Nvidia ? "https://www.nvidia.com/Download/index.aspx" : "https://www.amd.com/en/support/download/drivers.html");
+    private void DduClick(object sender, RoutedEventArgs e) => Launch("https://www.wagnardsoft.com/");
+    private void DeviceManagerClick(object sender, RoutedEventArgs e) => Launch("devmgmt.msc");
+    private void ProtectionClick(object sender, RoutedEventArgs e) => Launch("SystemPropertiesProtection.exe");
+    private void WindowsRecoveryClick(object sender, RoutedEventArgs e) => Launch("rstrui.exe");
+    private void InstalledAppsClick(object sender, RoutedEventArgs e) => Launch("ms-settings:appsfeatures");
+    private async void CreateRestoreClick(object sender, RoutedEventArgs e) { if (Confirm("Create Windows restore point?", "Requires System Protection enabled on the system drive. Windows enforces its own frequency/free-space rules; Apex does not bypass them.")) { await Workflow("restore-create", admin: true); await LoadRestore(); } }
+    private async void AutoDebloatClick(object sender, RoutedEventArgs e) => await RemoveApps(apps.Where(a => a.Automatic).ToArray(), true);
+    private async void RemoveAppClick(object sender, RoutedEventArgs e) { if (((Button)sender).Tag is AppItem app) await RemoveApps([app], false); }
+    private void SensorHelpClick(object sender, RoutedEventArgs e)
+    {
+        if (!Confirm("Hardware sensor access", latest.Status + "\n\nApex uses LibreHardwareMonitor 0.9.6. CPU temperature support depends on hardware, available sensor interfaces/drivers and permissions. No temperature is estimated and Windows driver/security checks stay enabled.\n\nConfirm to restart Apex with the standard Windows administrator prompt. Unsupported hardware can still remain unavailable.")) return;
+        try { Process.Start(new ProcessStartInfo(Environment.ProcessPath!) { UseShellExecute = true, Verb = "runas", Arguments = "--restart-from " + Environment.ProcessId }); Close(); }
+        catch (Exception ex) { SetStatus(ex.Message, true); }
+    }
+    private void ExportBiosClick(object sender, RoutedEventArgs e)
+    {
+        if (system.ValueKind != JsonValueKind.Object) { SetStatus("BIOS inventory has not loaded."); return; }
+        var picker = new SaveFileDialog { FileName = "Apex-BIOS-report.json", Filter = "JSON report|*.json" };
+        if (picker.ShowDialog(this) == true) { try { File.WriteAllText(picker.FileName, JsonSerializer.Serialize(system, new JsonSerializerOptions { WriteIndented = true })); SetStatus("Read-only BIOS report exported."); } catch (Exception ex) { SetStatus(ex.Message, true); } }
+    }
+    private void OemWebsiteClick(object sender, RoutedEventArgs e)
+    {
+        var board = system.Text("board").ToUpperInvariant();
+        var url = board.Contains("ASUSTEK") || board.Contains("ASUS") ? "https://www.asus.com/support/" : board.Contains("MICRO-STAR") || board.Contains("MSI") ? "https://www.msi.com/support" : board.Contains("GIGABYTE") ? "https://www.gigabyte.com/Support" : board.Contains("ASROCK") ? "https://www.asrock.com/support/" : board.Contains("DELL") ? "https://www.dell.com/support/home" : board.Contains("LENOVO") ? "https://support.lenovo.com/" : board.Contains("HP") ? "https://support.hp.com/" : "https://www.ami.com/bios-uefi-utilities/";
+        Launch(url);
+    }
+    private void LicensesClick(object sender, RoutedEventArgs e)
+    {
+        var text = "Apex Tweaks — made by riley\n\nLibreHardwareMonitorLib 0.9.6 (MPL 2.0)\nUnmodified library source: https://github.com/LibreHardwareMonitor/LibreHardwareMonitor/tree/v0.9.6\nMicrosoft System.Management and .NET runtime: Microsoft open-source licenses.\n\n";
+        var assembly = Assembly.GetExecutingAssembly(); foreach (var name in assembly.GetManifestResourceNames().Where(n => n.Contains("license", StringComparison.OrdinalIgnoreCase))) { using var stream = assembly.GetManifestResourceStream(name)!; using var reader = new StreamReader(stream); text += reader.ReadToEnd() + "\n\n"; }
+        Confirm("About & licenses", text);
+    }
     private void MinimizeClick(object sender, RoutedEventArgs e) => WindowState = WindowState.Minimized;
     private void MaximizeClick(object sender, RoutedEventArgs e) => WindowState = WindowState == WindowState.Maximized ? WindowState.Normal : WindowState.Maximized;
     private void CloseClick(object sender, RoutedEventArgs e) => Close();
-    private async Task SmokeTest()
+    private async Task Smoke()
     {
-        await Task.Delay(2200); Sample();
-        if (rows.Count < Catalog.All.Count || string.IsNullOrWhiteSpace(CpuName.Text)) throw new InvalidOperationException("Dashboard inventory did not populate.");
-        ShowPage("Optimisations"); Categories.SelectedIndex = 0; Search.Text = "transparency";
-        if (TweakList.Items.Count != 1 || Selected?.Tweak.Id != "visual.transparency") throw new InvalidOperationException("Catalogue search/selection failed.");
-        var favorite = Selected!; favorite.Favorite = true; favorites.Add(favorite.Tweak.Id); SavePreferences();
-        if (PreferenceFile.Load(Path.Combine(data, "settings.json")).Favorites?.Contains(favorite.Tweak.Id) != true) throw new InvalidOperationException("Favourite persistence failed.");
-        Search.Text = ""; States.SelectedItem = "Favourites";
-        if (TweakList.Items.Count != 1) throw new InvalidOperationException("Favourite filter failed.");
-        States.SelectedIndex = 0; Categories.SelectedItem = "Power configuration";
-        if (rows.Any(r => r.Tweak.Adjustable) && TweakList.Items.Count == 0) throw new InvalidOperationException("Power filter failed.");
-        Categories.SelectedIndex = 0; ShowPage("Backups");
-        if (BackupsPanel.Visibility != Visibility.Visible) throw new InvalidOperationException("Recovery navigation failed.");
-        var savedWidth = Width; var savedHeight = Height;
-        Width = MinWidth; Height = MinHeight; ShowPage("Optimisations"); UpdateLayout();
-        if (TweakList.ActualWidth < 300 || States.ActualHeight < 34 || ApplyButton.ActualWidth < 200)
-            throw new InvalidOperationException("Minimum-size catalogue layout clipped essential controls.");
-        Width = savedWidth; Height = savedHeight;
-        ShowPage("Dashboard"); await Dispatcher.InvokeAsync(UpdateLayout, DispatcherPriority.Render);
-        var directory = Path.GetDirectoryName(smokePath!)!; Directory.CreateDirectory(directory);
-        Capture(smokePath!);
-        ShowPage("Optimisations"); await Dispatcher.InvokeAsync(UpdateLayout, DispatcherPriority.Render);
-        Capture(Path.Combine(directory, Path.GetFileNameWithoutExtension(smokePath!) + "-catalogue.png"));
-        File.WriteAllText(smokePath + ".json", JsonSerializer.Serialize(new { catalogueTargets = rows.Count, registryPreferences = Catalog.All.Count, powerTargets = rows.Count(r => r.Tweak.Adjustable), distinctPowerSettings = rows.Where(r => r.Tweak.Adjustable).Select(r => r.Tweak.Path + "/" + r.Tweak.Name).Distinct().Count(), assertions = 8, changesApplied = 0 }));
+        await Task.Delay(2300); await Sample();
+        if (string.IsNullOrWhiteSpace(CpuName.Text) || RamGauge.Value is < 0 or > 100) throw new Exception("Home inventory failed.");
+        await ShowPage("General"); Search.Text = "transparency"; if (ToggleList.Items.Count != 1) throw new Exception("General search failed."); Search.Text = "";
+        if (ToggleList.Items.Count != 45) throw new Exception("General catalogue count failed.");
+        await ShowPage("Advanced"); var ac = ToggleList.Items.Count; DcTab.IsChecked = true; BuildToggles(); if (ac == 0 || ToggleList.Items.Count == 0 || advanced.Count > 120) throw new Exception("Advanced AC/DC catalogue failed.");
+        AcTab.IsChecked = true; BuildToggles();
+        foreach (var selected in new[] { "System Restore", "Drivers", "Debloating", "Networking", "Services", "BIOS / SCEWIN" }) await ShowPage(selected);
+        var savedWidth = Width; var savedHeight = Height; Width = MinWidth; Height = MinHeight; await ShowPage("General"); UpdateLayout();
+        if (Search.ActualWidth < 200 || ToggleList.ActualWidth < 500) throw new Exception("Minimum-size toggle layout failed.");
+        Width = savedWidth; Height = savedHeight; await ShowPage("Home"); UpdateLayout();
+        var directory = Path.GetDirectoryName(smokePath!)!; Directory.CreateDirectory(directory); Capture(smokePath!);
+        await ShowPage("General"); UpdateLayout(); Capture(Path.Combine(directory, "ui-preview-catalogue.png"));
+        File.WriteAllText(smokePath + ".json", JsonSerializer.Serialize(new { branding = "Apex Tweaks — made by riley", general = Catalog.All.Count, advanced = advanced.Count, advancedWritable = advanced.Count(t => t.Writable), pages = pageNames, uiChecks = 12, changesApplied = 0, cpuTemperatureAvailable = latest.CpuTemperature is not null, gpuTemperatureAvailable = latest.GpuTemperature is not null }));
     }
-    private void Capture(string path)
-    {
-        var visual = (FrameworkElement)Content;
-        var image = new RenderTargetBitmap((int)visual.ActualWidth, (int)visual.ActualHeight, 96, 96, PixelFormats.Pbgra32); image.Render(visual);
-        var encoder = new PngBitmapEncoder(); encoder.Frames.Add(BitmapFrame.Create(image)); using var stream = File.Create(path); encoder.Save(stream);
-    }
+    private void Capture(string path) { var visual = (FrameworkElement)Content; var bitmap = new RenderTargetBitmap((int)visual.ActualWidth, (int)visual.ActualHeight, 96, 96, PixelFormats.Pbgra32); bitmap.Render(visual); var encoder = new PngBitmapEncoder(); encoder.Frames.Add(BitmapFrame.Create(bitmap)); using var stream = File.Create(path); encoder.Save(stream); }
 }

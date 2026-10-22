@@ -18,6 +18,15 @@ public sealed class PowerSettings : ISettingsStore
         finally { LocalFree(pointer); }
     }
     public static string ActiveName() => Friendly(ActiveScheme(), null, null);
+    public static int? PerformanceDefault(Tweak t)
+    {
+        var performance = new Guid("8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c");
+        uint value;
+        var code = t.Backend == "PowerAC"
+            ? PowerReadACDefaultIndex(IntPtr.Zero, [performance], [Guid.Parse(t.Path)], [Guid.Parse(t.Name)], out value)
+            : PowerReadDCDefaultIndex(IntPtr.Zero, [performance], [Guid.Parse(t.Path)], [Guid.Parse(t.Name)], out value);
+        return code == 0 && t.Accepts(unchecked((int)value)) ? unchecked((int)value) : null;
+    }
     public Value Read(Tweak t)
     {
         if (!Supports(t)) return new(false);
@@ -170,6 +179,8 @@ public sealed class PowerSettings : ISettingsStore
     [DllImport("powrprof.dll")] private static extern uint PowerReadValueUnitsSpecifier(IntPtr root, [In] Guid[] group, [In] Guid[] setting, byte[] buffer, ref uint length);
     [DllImport("powrprof.dll")] private static extern uint PowerReadACValueIndex(IntPtr root, [In] Guid[] scheme, [In] Guid[] group, [In] Guid[] setting, out uint value);
     [DllImport("powrprof.dll")] private static extern uint PowerReadDCValueIndex(IntPtr root, [In] Guid[] scheme, [In] Guid[] group, [In] Guid[] setting, out uint value);
+    [DllImport("powrprof.dll")] private static extern uint PowerReadACDefaultIndex(IntPtr root, [In] Guid[] personality, [In] Guid[] group, [In] Guid[] setting, out uint value);
+    [DllImport("powrprof.dll")] private static extern uint PowerReadDCDefaultIndex(IntPtr root, [In] Guid[] personality, [In] Guid[] group, [In] Guid[] setting, out uint value);
     [DllImport("powrprof.dll")] private static extern uint PowerWriteACValueIndex(IntPtr root, [In] Guid[] scheme, [In] Guid[] group, [In] Guid[] setting, uint value);
     [DllImport("powrprof.dll")] private static extern uint PowerWriteDCValueIndex(IntPtr root, [In] Guid[] scheme, [In] Guid[] group, [In] Guid[] setting, uint value);
     [DllImport("powrprof.dll")] private static extern uint PowerSettingAccessCheck(uint accessor, [In] Guid[] setting);

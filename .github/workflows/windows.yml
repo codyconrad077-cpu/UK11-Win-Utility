@@ -21,10 +21,9 @@ jobs:
             }
           } catch {
             $output += "$_"
-            $output | Select-Object -Last 35 | ForEach-Object {
-              $line = "$_".Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
-              Write-Host "::error::$line"
-            }
+            $detail = ($output | Select-Object -Last 15) -join "`n"
+            $detail = $detail.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
+            Write-Host "::error::$detail"
             exit 1
           }
       - uses: actions/upload-artifact@v4

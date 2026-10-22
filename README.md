@@ -1,66 +1,59 @@
-# UK11 ULTIMATE
+# Apex Tweaks
 
-A Windows 10/11 WPF control centre with a custom dark interface, live CPU/memory charts, hardware identity, searchable configuration library, favourites, previews, exact-value backups and recovery. Version 0.2 is a development preview, not a claim of measured gaming performance gains.
+**made by riley** · A blue-accent Windows 10/11 x64 utility with a compact sidebar, live dashboard and simple tweak-name/on-off rows. This is an unsigned development preview. Configuration verification does not establish gaming performance gains.
 
-## Download
+Download **Apex.Tweaks.exe** from [GitHub Releases](https://github.com/codyconrad077-cpu/UK11-Win-Utility/releases). It is one self-contained executable: no ZIP extraction or separate .NET installation. Compatible sensor drivers, Windows components and internet-based installation services remain external prerequisites.
 
-Self-contained, unsigned x64 executables are available under [GitHub Releases](https://github.com/codyconrad077-cpu/UK11-Win-Utility/releases). Download the EXE asset directly; it does not require a separate .NET installation. Do not disable Windows security to run unsigned software.
+## Pages
 
-## Build and run
+| Page | Implemented behavior |
+| --- | --- |
+| Home | Actual CPU/GPU/RAM usage, CPU/GPU temperature selector and history, hardware identity, active power plan and disk usage. Unsupported sensors show unavailable. |
+| System Restore | Enumerate Windows restore points, create and verify a new point through Windows, open System Protection/recovery, restore Apex's saved tweak originals. Windows can refuse creation when protection is disabled or its frequency limit applies. |
+| Drivers | NVIDIA/AMD compatible update scanning and installation through Windows Update; export installed third-party drivers; a defined Microsoft VC++, .NET desktop and DirectX runtime set through winget. Package/driver terms are shown before installation. |
+| General | 45 current-user Windows preferences, each with one toggle. Missing values, wrong types, unsupported builds and already-target values without an Apex original remain read-only. |
+| Debloating | Preview/remove optional current-user Appx packages; Microsoft/other package tabs. Auto debloat uses an eight-name optional-app allowlist. Protected Store, App Installer, framework and shell packages are excluded. Desktop applications use Windows Installed Apps. |
+| Networking | Select an active physical adapter; configure Cloudflare IPv4 DNS, clear cache and verify resolution; restore original static/DHCP DNS mode; run an actual ICMP latency/loss test. No unmeasured MTU/TCP presets or guaranteed ping improvements. |
+| Advanced | Up to 120 AC/DC endpoints for 60 identified power parameters. Targets are Windows-reported High Performance defaults validated against the OS's actual enumerations/ranges. Hardware/build availability varies. |
+| Services | Nine allowlisted optional services with saved startup/delayed-start/running state and verified restore. Store access policy is available only on supported Enterprise/Education editions; Store infrastructure is preserved. Critical security, updating and driver services are excluded. |
+| BIOS / SCEWIN | Read-only motherboard/revision/BIOS/Secure Boot information, report export and OEM support. No generic firmware writes. |
+
+**Apply all tweaks** applies compatible unapplied targets in the current General section or Advanced AC/DC view after a preview. **Revert all tweaks** restores saved General/Advanced originals, including retained prior-plan descriptors. Services, DNS, drivers and app removal have separate recovery workflows; they are not silently combined into this button.
+
+Advanced values can increase heat, noise, power draw or battery drain. AC/DC are independent stored values, not 120 independent measured FPS improvements. A desktop without a battery can store DC values without using them. The requested “300+ proven premium optimisations” claim is not supported and is not advertised.
+
+DDU remains a guided manual workflow linked to its official source. SCEWIN automation requires an exact motherboard/revision, OEM tool version, validated setting mappings and recovery procedure; an AMI BIOS or present executable alone cannot establish compatibility. Apex does not install sensor drivers, bypass Windows protections, flash firmware or automatically reboot.
+
+## Recovery and permissions
+
+Keep `%LOCALAPPDATA%\UK11Ultimate` when upgrading from earlier UK11 releases. The legacy data directory deliberately preserves existing originals. It contains `backups`, `power-catalogue.json`, `services`, `network`, `apps`, `driver-backups`, per-operation `jobs` results and logs. Do not delete it before restoring changes you intend to undo.
+
+General/Advanced originals are flushed before writes, verified after mutation and restored exactly. Batches preflight every target, reject stale previews and attempt reverse-order rollback after a failure. Conflicting external values are preserved with originals retained. Power operations target the captured scheme and reapply it only if observed active. Other power utilities can race with Windows plan switching.
+
+Service/Store-policy and DNS workflows journal originals before changing them. Pending service changes remain recoverable through their toggle; DNS failures attempt and verify rollback. Windows UAC is requested only for administrator operations. Cancelling it does not launch the workflow. App removal records inventory before removal, but removed package files may be gone: reinstall requires retained files or the original publisher/Store. Driver export is not a full system image or guaranteed rollback; use Device Manager or Windows recovery when appropriate.
+
+## Build and validation
 
 Install .NET 8 SDK (see `global.json`). On Windows:
 
 ```powershell
 ./scripts/build.ps1
-# Launch the application:
+# Run from source:
 dotnet run --project src/UK11.App
-# Build and validate the self-contained portable EXE:
+# Validate and publish a standalone executable:
 ./scripts/build.ps1 -Publish
-./artifacts/win-x64/UK11.Ultimate.exe
+./artifacts/win-x64/Apex.Tweaks.exe
 ```
 
-The publishing script runs the engine tests, isolated Windows integration tests, and WPF UI smoke checks. It generates actual rendered dashboard/catalogue screenshots and JSON reports in `artifacts/win-x64`. Test failures stop publishing. Tests never apply the real catalogue's desktop preferences or alter the active power plan.
-
-On Linux:
+On Linux, cross-compile and run the portable engine assertions:
 
 ```bash
 dotnet build UK11.Ultimate.sln -c Release
 dotnet run --project tests/UK11.Tests -c Release
 ```
 
-These assertion runners must be invoked with `dotnet run`; `dotnet test` does not execute them. Linux can cross-compile WPF but cannot launch it or exercise native Windows APIs. Windows CI runs both test runners and the UI. Only Microsoft SDK/reference/runtime packs are needed; there are no third-party runtime packages. WPF trimming is disabled. Native components can extract to the user's temp directory during single-file startup.
+These are executable assertion runners; `dotnet test` does not execute them. Linux cannot launch WPF or test Windows APIs. Windows CI runs portable assertions, isolated HKCU adapter checks, inactive duplicate-plan write/verify/restore, PowerShell 5.1 parser/rejection/read-only checks, sensor capability reporting, and WPF nine-page navigation/search/rendering. It saves actual screenshots and native/UI JSON reports. Mutations such as real app removal, service/DNS changes and driver/runtime installation need disposable-client acceptance; see [WINDOWS-ACCEPTANCE.md](WINDOWS-ACCEPTANCE.md).
 
-## The catalogue
+The app uses unmodified LibreHardwareMonitorLib 0.9.6 and System.Management with locked dependency hashes. Licenses/source notices are embedded under About & licenses and included in `licenses/`. Sensor availability depends on hardware, privileges and compatible installed driver support. Missing readings are never estimated. Single-file publishing disables trimming and can extract native components to the user's temporary directory.
 
-**45 fixed preferences**, each with a unique ID and registry target, cover appearance, Explorer, taskbar, suggestions, privacy and capture. These are existing Windows preference values, not 45 proven FPS optimisations. Missing values, unexpected types and incompatible builds are unavailable rather than created or guessed. Some legacy registry contracts may be ignored by later Windows versions or overridden by policy. The application distinguishes stored-value verification from actual user-visible effects and performance measurements.
-
-**Power configuration** discovers Windows power parameters through documented PowrProf APIs. Each setting has separately stored plugged-in (AC) and battery (DC) targets, with OS-supplied descriptions and enumerated choices or min/max/increment validation. The count depends on OS, hardware and available schemes. AC/DC endpoints are counted explicitly, not advertised as distinct proven performance improvements. A desktop can store DC preferences without having a battery; they have no active battery-mode effect on such a machine.
-
-Power values are advanced configuration choices. Increasing CPU responsiveness can increase power draw, heat, fan noise and battery drain. Sleep/battery-action changes can affect data loss. The app does not select an arbitrary "fastest" value or apply power controls in bulk. Choose a value, review its description and implications, and measure your own workload. Read-only and unknown-range parameters cannot be applied.
-
-The library has category/state filters, search, persistent favourites, exact current/target details and technical implementation views. Only supported, unapplied fixed preferences can be selected for batches. A batch preflights every target, rejects stale previews and duplicate targets, verifies writes, and attempts reverse-order rollback after failure. Recovery failures or external conflicts are reported individually with originals retained.
-
-## Backups and recovery
-
-Keep `%LOCALAPPDATA%\UK11Ultimate` when upgrading:
-
-- `settings.json`: page, search, category and favourites.
-- `backups\<id>.json`: original DWORD, applied value, UTC timestamp and Prepared/Applied/Restored journal state.
-- `backups\transactions.log`: operations and write/restore failures.
-- `power-catalogue.json`: power target descriptors, including exact scheme, group, setting GUIDs and AC/DC side.
-
-An original is flushed to disk before any mutation. Results are read back through the same Windows API/registry adapter. Interrupted Prepared operations remain recoverable. Reapplying does not replace unresolved originals. Once restored, a subsequent operation records a new original. An existing target value without a UK11 backup does not imply UK11 owns it and cannot be "restored" to a fabricated default.
-
-Restoration preserves conflicting external values. If a value differs from both the original and UK11's applied value, inspect it and decide manually rather than forcing recovery. Corrupt metadata blocks the affected operation. Keep the power catalogue together with backup files so previous-plan targets remain identifiable after switching plans. The adapter writes the captured scheme and reapplies it only when observed active. Windows has no cross-process atomic plan-switch operation; other power tools can still race with it.
-
-These are setting backups, not full-system backups or Windows System Restore points. The app does not flash firmware, install drivers, overclock, disable core security or execute hidden shell scripts. It requests no blanket elevation: current-user registry preferences need none, and power writes follow Windows policy/access checks. Only one application instance can access the per-user data folder at a time.
-
-## Project layout
-
-- `UK11.Core`: catalogue definitions, value/range rules, persistent transactions, conflict-aware restore, batch rollback and preferences.
-- `UK11.Windows`: registry, PowrProf power discovery/read/write, CPU sampler and read-only hardware/memory APIs.
-- `UK11.App`: custom WPF shell, dashboard, virtualized catalogue, detail inspector, favourites, review dialogs and recovery.
-- `UK11.Tests`: portable fault-injection tests and catalogue integrity checks.
-- `UK11.Windows.Tests`: temporary HKCU keys, native hardware checks, and write/verify/restore against an inactive duplicate power plan.
-
-See [RELEASE-NOTES.md](RELEASE-NOTES.md), [PROGRESS.md](PROGRESS.md) and [WINDOWS-ACCEPTANCE.md](WINDOWS-ACCEPTANCE.md) for scope and remaining acceptance work. Future work includes read-only SetupAPI driver inventory, network diagnostics and actual workload benchmarking. No invented tweak count or performance percentage is used.
+Projects retain their UK11 namespaces: Core is the transactional engine, Windows contains native adapters/workflows/sensors, App contains WPF, and the two executable test projects separate portable and Windows checks. See [PROGRESS.md](PROGRESS.md) and [RELEASE-NOTES.md](RELEASE-NOTES.md).

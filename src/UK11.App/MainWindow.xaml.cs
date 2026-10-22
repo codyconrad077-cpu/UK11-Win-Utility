@@ -267,7 +267,7 @@ public partial class MainWindow : Window
     private async Task LoadNetwork()
     {
         var result = await Workflow("network-list"); if (result is null) return;
-        Adapters.ItemsSource = result.Data.Items().Select(a => new AdapterItem(int.Parse(a.Text("index")), a.Text("name"), $"{a.Text("description")}\n{a.Text("status")} · Link {a.Text("speed")}\nIPv4 DNS: {a.GetProperty("dns")} ")).ToList(); Adapters.SelectedIndex = Adapters.Items.Count > 0 ? 0 : -1;
+        Adapters.ItemsSource = result.Data.Items().Select(a => new AdapterItem(int.Parse(a.Text("index")), a.Text("name"), $"{a.Text("description")}\n{a.Text("status")} · Link {a.Text("speed")}\nIPv4 DNS: {(a.Flag("dnsAvailable") ? a.GetProperty("dns").ToString() : "Unavailable — " + a.Text("dnsError"))} ")).ToList(); Adapters.SelectedIndex = Adapters.Items.Count > 0 ? 0 : -1;
     }
     private async Task LoadServices()
     {

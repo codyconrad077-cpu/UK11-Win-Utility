@@ -215,7 +215,11 @@ public static class Scripts
     [pscustomobject]@{message='Original package registration verified.'}
     """;
     private const string Network = """
-    @(Get-NetAdapter -Physical | ForEach-Object { $adapter=$_; $dns=Get-DnsClientServerAddress -InterfaceIndex $adapter.ifIndex -AddressFamily IPv4; [pscustomobject]@{index=$adapter.ifIndex;name=$adapter.Name;description=$adapter.InterfaceDescription;status=[string]$adapter.Status;speed=[string]$adapter.LinkSpeed;dns=@($dns.ServerAddresses)} })
+    @(Get-NetAdapter -Physical | ForEach-Object {
+      $adapter=$_; $dns=$null; $dnsError=''
+      try {$dns=Get-DnsClientServerAddress -InterfaceIndex $adapter.ifIndex -AddressFamily IPv4 -ErrorAction Stop} catch {$dnsError=$_.Exception.Message}
+      [pscustomobject]@{index=$adapter.ifIndex;name=$adapter.Name;description=$adapter.InterfaceDescription;status=[string]$adapter.Status;speed=[string]$adapter.LinkSpeed;dns=@($dns.ServerAddresses | Where-Object {$_});dnsAvailable=($null -ne $dns);dnsError=$dnsError}
+    })
     """;
     private const string NetworkConfigure = """
     $index=[int]$request.index

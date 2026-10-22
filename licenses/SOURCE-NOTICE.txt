@@ -1,0 +1,21 @@
+Apex Tweaks uses unmodified LibreHardwareMonitorLib 0.9.6 (MPL-2.0).
+Source: https://github.com/LibreHardwareMonitor/LibreHardwareMonitor/tree/v0.9.6
+Its third-party notices, including PawnIO.Modules LGPL-2.1, are included.
+PawnIO.Modules source: https://github.com/namazso/PawnIO.Modules
+Apex does not install PawnIO or bypass Windows driver/security policies.
+
+Other unmodified dependencies (versions and hashes in packages.lock.json):
+DiskInfoToolkit 1.1.2 (MPL-2.0): https://github.com/Blacktempel/DiskInfoToolkit
+BlackSharp.Core 1.0.7 (MPL-2.0): https://github.com/Blacktempel/BlackSharp
+RAMSPDToolkit-NDD 1.4.2 (MPL-2.0): https://github.com/Blacktempel/RAMSPDToolkit
+HidSharp 2.6.4: included HidSharp license.
+Mono.Posix.NETStandard 1.0.0: included Mono license.
+Microsoft .NET runtime and System libraries (MIT): https://github.com/dotnet/runtime
+
+Apex source/build instructions:
+https://github.com/codyconrad077-cpu/UK11-Win-Utility
+The source release can be rebuilt with modified libraries using .NET SDK,
+dotnet restore and scripts/build.ps1 -Publish. No library modifications are
+included. Applicable library licenses permit modification and debugging;
+Apex adds no restriction on those rights. About & licenses exposes these
+notices in the standalone executable.

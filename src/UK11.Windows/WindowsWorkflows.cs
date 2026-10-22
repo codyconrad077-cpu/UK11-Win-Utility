@@ -267,10 +267,10 @@ public static class Scripts
     """;
     private const string DriverScan = """
     $updates=Driver-Updates
-    @($updates | ForEach-Object { $u=$_; [pscustomobject]@{id=$u.Identity.UpdateID;revision=$u.Identity.RevisionNumber;title=$u.Title;manufacturer=$u.DriverManufacturer;model=$u.DriverModel;hardwareId=$u.DriverHardwareID;eula=$u.EulaText;eulaAccepted=$u.EulaAccepted} })
+    @($updates | ForEach-Object { $u=$_; [pscustomobject]@{id=$u.Identity.UpdateID;revision=$u.Identity.RevisionNumber;title=$u.Title;manufacturer=$u.DriverManufacturer;driverClass=$u.DriverClass;model=$u.DriverModel;hardwareId=$u.DriverHardwareID;eula=$u.EulaText;eulaAccepted=$u.EulaAccepted} })
     """;
     private const string DriverBackup = """
-    $destination=Join-Path $rootData ('driver-backups\'+(Get-Date -Format 'yyyyMMdd-HHmmss'))
+    $destination=Join-Path $rootData ('driver-backups\'+(Get-Date -Format 'yyyyMMdd-HHmmss')+'-'+[guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $destination -Force | Out-Null
     & "$env:SystemRoot\System32\pnputil.exe" /export-driver '*' $destination | Out-Null
     if($LASTEXITCODE -ne 0){throw 'Windows driver export failed. No installation was started.'}
@@ -280,11 +280,15 @@ public static class Scripts
     private static string DriverInstall => """
     if($request.acceptTerms -ne $true){throw 'Review and accept the selected driver license terms first.'}
     if($request.vendor -cnotin @('NVIDIA','AMD')){throw 'Unsupported GPU update group.'}
-    $ids=@($request.ids); if($ids.Count -eq 0){throw 'No driver updates selected.'}
+    $confirmed=@($request.updates); $ids=@($confirmed | ForEach-Object id); if($ids.Count -eq 0 -or @($ids | Select-Object -Unique).Count -ne $ids.Count){throw 'No unique driver updates selected.'}
     $available=Driver-Updates; $selected=New-Object -ComObject Microsoft.Update.UpdateColl
     foreach($u in $available){
       if($u.Identity.UpdateID -cin $ids){
+        if($u.DriverClass -ne 'Display'){throw 'Only graphics/display class updates are allowed in this workflow.'}
         if(($u.DriverManufacturer+' '+$u.Title) -notmatch $(if($request.vendor -eq 'NVIDIA'){'NVIDIA'}else{'AMD|Advanced Micro Devices'})){throw 'Update vendor does not match the confirmed group.'}
+        $reviewed=$confirmed | Where-Object id -ceq $u.Identity.UpdateID
+        $sha=[Security.Cryptography.SHA256]::Create(); try {$hash=[BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes([string]$u.EulaText))).Replace('-','').ToLowerInvariant()} finally {$sha.Dispose()}
+        if($reviewed.revision -ne $u.Identity.RevisionNumber -or $reviewed.licenseSha256 -cne $hash){throw 'Driver revision/license changed after review. Scan and review again.'}
         if(-not $u.EulaAccepted){$u.AcceptEula()}
         [void]$selected.Add($u)
       }

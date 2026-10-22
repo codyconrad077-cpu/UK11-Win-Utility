@@ -283,15 +283,15 @@ public partial class MainWindow : Window
     private async Task ScanDrivers()
     {
         var result = await Workflow("driver-scan"); if (result is null) return;
-        driverUpdates = result.Data.Items().Where(u => (u.Text("manufacturer") + " " + u.Text("title")).Contains(Nvidia ? "NVIDIA" : "AMD", StringComparison.OrdinalIgnoreCase) || !Nvidia && u.Text("manufacturer").Contains("Advanced Micro Devices", StringComparison.OrdinalIgnoreCase))
-            .Select(u => new DriverItem(u.Text("id"), u.Text("title"), u.Text("manufacturer"), u.Text("eula"))).ToList();
+        driverUpdates = result.Data.Items().Where(u => u.Text("driverClass").Equals("Display", StringComparison.OrdinalIgnoreCase) && ((u.Text("manufacturer") + " " + u.Text("title")).Contains(Nvidia ? "NVIDIA" : "AMD", StringComparison.OrdinalIgnoreCase) || !Nvidia && u.Text("manufacturer").Contains("Advanced Micro Devices", StringComparison.OrdinalIgnoreCase)))
+            .Select(u => new DriverItem(u.Text("id"), int.Parse(u.Text("revision")), u.Text("title"), u.Text("manufacturer"), u.Text("eula"))).ToList();
         DriverResults.Text = driverUpdates.Count == 0 ? "Windows Update reports no applicable updates for this vendor. This does not prove the latest vendor release is installed." : string.Join("\n\n", driverUpdates.Select(u => u.Title)); InstallDriversButton.IsEnabled = driverUpdates.Count > 0;
     }
     private async void InstallDriversClick(object sender, RoutedEventArgs e)
     {
         if (driverUpdates.Count == 0) return;
         if (!Confirm("Review GPU driver installation", string.Join("\n\n", driverUpdates.Select(u => u.Title + "\n" + u.License)) + "\n\nConfirming accepts these license terms. Apex exports third-party driver packages before installation, attempts a Windows restore point and continues with the driver archive if System Restore is unavailable. Windows Update verifies downloads and hardware applicability. Do not interrupt installation. Reboot is never automatic.")) return;
-        var result = await Workflow("driver-install", new { vendor = Nvidia ? "NVIDIA" : "AMD", ids = driverUpdates.Select(u => u.Id).ToArray(), acceptTerms = true }, true);
+        var result = await Workflow("driver-install", new { vendor = Nvidia ? "NVIDIA" : "AMD", updates = driverUpdates.Select(u => new { id = u.Id, revision = u.Revision, licenseSha256 = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(u.License))).ToLowerInvariant() }).ToArray(), acceptTerms = true }, true);
         if (result is not null) DriverResults.Text = JsonSerializer.Serialize(result.Data, new JsonSerializerOptions { WriteIndented = true });
         InstallDriversButton.IsEnabled = false;
     }

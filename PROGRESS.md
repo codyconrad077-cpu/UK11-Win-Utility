@@ -14,13 +14,13 @@
 - [x] 19 portable assertion tests: each catalogue action, missing/unsupported settings, idempotence, exact undo, write/verification faults, conflict handling, restart recovery, preferences and corrupt/invalid backups.
 - [x] Windows x64 self-contained single-file executable produced. This proves cross-compilation and bundling only, not Windows execution.
 
-## Windows-only, untested
+## Windows validation
 
 - [ ] WPF launch, visual polish, keyboard/accessibility, DPI and resize acceptance.
-- [x] Native registry adapter and hardware integration test runner: four checks passed on GitHub's Windows runner, alongside all 19 portable tests (run 39839019868). Packaging failed separately because of PowerShell argument parsing; publishing arguments were corrected.
+- [x] Native registry adapter and hardware integration test runner: four checks passed on GitHub's Windows runner, alongside all 19 portable tests.
 - [ ] Actual desktop/capture effects and real-setting rollback on Windows 10 and 11.
 - [ ] Portable EXE on a clean machine without installed .NET; release signing and malware/reputation review.
-- [x] Windows CI build and tests executed; downloadable packaging is being revalidated after the publishing-script correction.
+- [x] Windows CI build, tests, self-contained publishing and artifact upload passed in [run 39839302119](https://github.com/codyconrad077-cpu/UK11-Win-Utility/actions/runs/39839302119). The PowerShell publishing argument issue was fixed. Artifact: `UK11-Ultimate-win-x64-unsigned` (64.4 MB).
 
 ## Planned; not presented as functioning features
 

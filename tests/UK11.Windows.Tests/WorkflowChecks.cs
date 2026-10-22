@@ -60,6 +60,7 @@ internal static class WorkflowChecks
                 catch (InvalidOperationException ex) when (ex.Message.Contains("administrator")) { }
             }
             await SandboxedRecovery(root, sourcePath);
+            if (new float?[] { null, 0, -999, float.NaN, float.PositiveInfinity, 151 }.Any(v => Sensors.ValidTemperature(v) is not null) || Sensors.ValidTemperature(42.5f) != 42.5) throw new Exception("Invalid/zero temperature sentinel was accepted");
             using var sensors = new Sensors(); var reading = sensors.Read();
             if (reading.GpuLoad is < 0 or > 100 || reading.CpuTemperature is < -30 or > 150 || reading.GpuTemperature is < -30 or > 150) throw new Exception("Implausible sensor data");
             if (string.IsNullOrWhiteSpace(reading.Status)) throw new Exception("Sensor capability status missing");

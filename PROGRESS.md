@@ -17,10 +17,10 @@
 ## Windows-only, untested
 
 - [ ] WPF launch, visual polish, keyboard/accessibility, DPI and resize acceptance.
-- [ ] Native registry adapter and hardware integration test runner.
+- [x] Native registry adapter and hardware integration test runner: four checks passed on GitHub's Windows runner, alongside all 19 portable tests (run 39839019868). Packaging failed separately because of PowerShell argument parsing; publishing arguments were corrected.
 - [ ] Actual desktop/capture effects and real-setting rollback on Windows 10 and 11.
 - [ ] Portable EXE on a clean machine without installed .NET; release signing and malware/reputation review.
-- [ ] Windows CI run: workflow is supplied but has not been triggered here.
+- [x] Windows CI build and tests executed; downloadable packaging is being revalidated after the publishing-script correction.
 
 ## Planned; not presented as functioning features
 

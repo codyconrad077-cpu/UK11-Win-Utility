@@ -9,6 +9,6 @@ if ($IsWindows -or $env:OS -eq 'Windows_NT') {
     Invoke-Dotnet run --project tests/UK11.Windows.Tests -c Release --no-build
 }
 if ($Publish) {
-    Invoke-Dotnet publish src/UK11.App -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:PublishTrimmed=false -o artifacts/win-x64
+    Invoke-Dotnet publish src/UK11.App -c Release -r win-x64 --self-contained true '-p:PublishSingleFile=true' '-p:IncludeNativeLibrariesForSelfExtract=true' '-p:PublishTrimmed=false' -o artifacts/win-x64
     Get-FileHash artifacts/win-x64/UK11.Ultimate.exe -Algorithm SHA256 | Format-List
 }

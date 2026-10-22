@@ -243,7 +243,9 @@ public partial class MainWindow : Window
     private async Task LoadRestore()
     {
         UpdateBackups(); var result = await Workflow("restore-list"); if (result is null) return;
-        CreateRestoreButton.IsEnabled = result.Data.Flag("available"); RestoreStatus.Text = result.Data.Text("message");
+        // A standard user's inventory permissions do not establish whether an elevated
+        // creation request can succeed. The creation workflow checks and verifies it.
+        RestoreStatus.Text = result.Data.Text("message");
         RestorePoints.Text = result.Data.TryGetProperty("points", out var points) ? string.Join("\n\n", points.Items().Select(p => p.Text("SequenceNumber") + " · " + p.Text("Description") + "\n" + p.Text("CreationTime"))) : "";
         if (RestorePoints.Text.Length == 0) RestorePoints.Text = "No restore points are currently reported.";
     }

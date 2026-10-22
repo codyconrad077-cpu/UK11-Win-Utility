@@ -71,7 +71,7 @@ public static class Scripts
       $temp=$path+'.tmp'; $bytes=[Text.Encoding]::UTF8.GetBytes($text)
       $stream=[IO.File]::Open($temp,[IO.FileMode]::Create,[IO.FileAccess]::Write,[IO.FileShare]::None)
       try { $stream.Write($bytes,0,$bytes.Length); $stream.Flush($true) } finally { $stream.Dispose() }
-      if (Test-Path -LiteralPath $path) { [IO.File]::Replace($temp,$path,$null) } else { [IO.File]::Move($temp,$path) }
+      if (Test-Path -LiteralPath $path) { [IO.File]::Replace($temp,$path,[System.Management.Automation.Language.NullString]::Value) } else { [IO.File]::Move($temp,$path) }
     }
     function Read-Backup($path) { if(Test-Path -LiteralPath $path){Get-Content -LiteralPath $path -Raw | ConvertFrom-Json} }
     function Log-Operation($text) { Add-Content -LiteralPath (Join-Path $rootData 'operations.log') -Value ((Get-Date).ToUniversalTime().ToString('o')+' '+$text) }

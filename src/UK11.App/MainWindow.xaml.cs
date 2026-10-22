@@ -200,7 +200,8 @@ public partial class MainWindow : Window
         Dictionary<string, Value> before;
         try { before = targets.ToDictionary(t => t.Id, t => engine.Inspect(t).Current); }
         catch (Exception ex) { SetStatus(ex.Message, true); return; }
-        if (confirm && !Confirm(restore ? "Revert all saved tweaks?" : "Apply section tweaks?", string.Join("\n", targets.Select(t => "• " + t.Title)) + "\n\n" + (restore ? "Apex restores its recorded originals and preserves conflicting external values. Apps, drivers, services and DNS use separate recovery controls." : "Original values are saved before writes. Every result is read back. A failure triggers reverse-order recovery of this batch. Advanced performance defaults can increase heat, fan activity and battery drain; benchmark your own workload."))) return;
+        var preview = string.Join("\n\n", targets.Select(t => "• " + t.Title + "\n" + t.Format(before[t.Id].Number) + " → " + (restore ? "saved original" : t.Format(t.Desired))));
+        if (confirm && !Confirm(restore ? "Revert all saved tweaks?" : "Apply section tweaks?", preview + "\n\n" + (restore ? "Apex restores its recorded originals and preserves conflicting external values. Apps, drivers, services and DNS use separate recovery controls." : "Original values are saved before writes. Every result is read back. A failure triggers reverse-order recovery of this batch. Advanced performance defaults can increase heat, fan activity and battery drain; benchmark your own workload."))) return;
         SetBusy(true);
         try
         {

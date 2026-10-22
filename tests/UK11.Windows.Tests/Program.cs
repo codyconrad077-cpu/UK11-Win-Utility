@@ -15,7 +15,7 @@ try
         var t = original with { Path = path, MinimumBuild = 10240, MaximumBuild = int.MaxValue };
         key.SetValue(t.Name, 7, RegistryValueKind.DWord);
         engine.Apply(t);
-        if (store.Read(t) != new Value(true, 0)) throw new Exception("Native apply failed");
+        if (store.Read(t) != new Value(true, t.Desired)) throw new Exception("Native apply failed: " + t.Id);
         engine.Restore(t);
         if (store.Read(t) != new Value(true, 7)) throw new Exception("Native restore failed");
         key.SetValue(t.Name, "7", RegistryValueKind.String);

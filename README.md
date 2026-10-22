@@ -2,7 +2,7 @@
 
 **made by riley** · A blue-accent Windows 10/11 x64 utility with a compact sidebar, live dashboard and simple tweak-name/on-off rows. This is an unsigned development preview. Configuration verification does not establish gaming performance gains.
 
-Download **Apex.Tweaks.exe** from [GitHub Releases](https://github.com/codyconrad077-cpu/UK11-Win-Utility/releases). It is one self-contained executable: no ZIP extraction or separate .NET installation. Compatible sensor drivers, Windows components and internet-based installation services remain external prerequisites.
+Download [**Apex.Tweaks.exe — v0.3.0-preview.4**](https://github.com/codyconrad077-cpu/UK11-Win-Utility/releases/download/v0.3.0-preview.4/Apex.Tweaks.exe) from [GitHub Releases](https://github.com/codyconrad077-cpu/UK11-Win-Utility/releases). It is one self-contained executable: no ZIP extraction or separate .NET installation. Compatible sensor drivers, Windows components and internet-based installation services remain external prerequisites.
 
 ## Pages
 

@@ -113,7 +113,7 @@ public sealed class Engine(ISettingsStore store, string directory)
             Log(t, "Restore prepared");
             try
             {
-                store.Write(t, b.Original);
+                if (current != b.Original) store.Write(t, b.Original);
                 if (store.Read(t) != b.Original) throw new IOException("Restore verification failed. Backup retained.");
                 Save(t, b with { State = "Restored" });
                 Log(t, "Restore verified");

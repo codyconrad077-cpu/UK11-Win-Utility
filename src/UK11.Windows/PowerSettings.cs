@@ -69,15 +69,12 @@ public sealed class PowerSettings : ISettingsStore
                 PowerReadValueMax(IntPtr.Zero, [group], [setting], out var max);
                 PowerReadValueIncrement(IntPtr.Zero, [group], [setting], out var step);
                 if (step == 0) step = 1;
-                // Continuous settings can expose a very large/infinite sequence of possible values.
-                // Prefer their documented numeric range instead of treating them as finite enum choices.
+                // Finite choices take precedence over ranges (enumerations can have gaps).
+                // Continuous settings can expose unbounded possible-value sequences; use their range instead.
                 Choice[] options = [];
                 var complete = true;
-                if (!ranged)
-                {
-                    try { options = Options(group, setting); }
-                    catch (InvalidDataException ex) { complete = false; description += " Editing unavailable: " + ex.Message; }
-                }
+                try { options = Options(group, setting); }
+                catch (InvalidDataException ex) { complete = ranged; if (!ranged) description += " Editing unavailable: " + ex.Message; }
                 var units = Units(group, setting);
                 foreach (var ac in new[] { true, false })
                 {
@@ -91,7 +88,15 @@ public sealed class PowerSettings : ISettingsStore
                         Writable = complete && (options.Length > 0 || ranged) && PowerSettingAccessCheck(ac ? 0u : 1u, [setting]) == 0
                     };
                     var current = store.Read(t);
-                    if (current.Exists) result.Add(t with { Desired = current.Number });
+                    if (current.Exists)
+                    {
+                        var validOriginal = t.Accepts(current.Number);
+                        result.Add(t with
+                        {
+                            Desired = current.Number, Writable = t.Writable && validOriginal,
+                            Effect = t.Effect + (validOriginal ? "" : " Editing disabled because the original is outside the reported choices/range; exact API restoration cannot be assumed.")
+                        });
+                    }
                 }
             }
         }

@@ -129,7 +129,13 @@ internal static class WorkflowChecks
     private static async Task PowerShell(string script, string sourcePath)
     {
         var info = new ProcessStartInfo(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), @"WindowsPowerShell\v1.0\powershell.exe")) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
-        info.Arguments = "-NoProfile -NonInteractive -EncodedCommand " + Convert.ToBase64String(Encoding.Unicode.GetBytes(script));
+        // Composite fault-injection scenarios exceed Windows' command-line size limit.
+        // Read our own generated test source through a short bootstrap instead.
+        var scriptPath = Path.Combine(Path.GetDirectoryName(sourcePath)!, "check-source.txt");
+        File.WriteAllText(scriptPath, script);
+        const string bootstrap = "& ([scriptblock]::Create([IO.File]::ReadAllText($env:APEX_TEST_CODE)))";
+        info.Arguments = "-NoProfile -NonInteractive -EncodedCommand " + Convert.ToBase64String(Encoding.Unicode.GetBytes(bootstrap));
+        info.Environment["APEX_TEST_CODE"] = scriptPath;
         info.Environment["APEX_TEST_SCRIPTS"] = sourcePath;
         using var process = Process.Start(info)!;
         var stdout = process.StandardOutput.ReadToEndAsync(); var stderr = process.StandardError.ReadToEndAsync();

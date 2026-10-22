@@ -50,8 +50,9 @@ try
         int? alternative = setting.Choices.FirstOrDefault(c => c.Number != before.Number)?.Number;
         if (setting.Choices.Length == 0)
         {
-            if (unchecked((uint)before.Number) != setting.Minimum) alternative = unchecked((int)setting.Minimum);
-            else if ((ulong)setting.Minimum + setting.Increment <= setting.Maximum) alternative = unchecked((int)(setting.Minimum + setting.Increment));
+            var current = unchecked((uint)before.Number);
+            if ((ulong)current >= (ulong)setting.Minimum + setting.Increment) alternative = unchecked((int)(current - setting.Increment));
+            else if ((ulong)current + setting.Increment <= setting.Maximum) alternative = unchecked((int)(current + setting.Increment));
         }
         if (alternative is null) { noAlternativePower++; continue; }
         var target = setting with { Desired = alternative.Value };

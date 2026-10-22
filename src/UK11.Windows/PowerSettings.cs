@@ -34,9 +34,10 @@ public sealed class PowerSettings : ISettingsStore
         if (!Supports(t) || !value.Exists) throw new InvalidOperationException("Power target is unavailable.");
         var scheme = Guid.Parse(t.Scheme); var group = Guid.Parse(t.Path); var setting = Guid.Parse(t.Name);
         Check(PowerSettingAccessCheck(t.Backend == "PowerAC" ? 0u : 1u, [setting]));
-        Check(t.Backend == "PowerAC"
+        var error = t.Backend == "PowerAC"
             ? PowerWriteACValueIndex(IntPtr.Zero, [scheme], [group], [setting], unchecked((uint)value.Number))
-            : PowerWriteDCValueIndex(IntPtr.Zero, [scheme], [group], [setting], unchecked((uint)value.Number)));
+            : PowerWriteDCValueIndex(IntPtr.Zero, [scheme], [group], [setting], unchecked((uint)value.Number));
+        if (error != 0) throw new Win32Exception((int)error, $"Windows rejected {t.Title}: value {unchecked((uint)value.Number)} ({setting}), error {error}.");
         // Never deliberately switch to an inactive captured plan. Reapply only the currently active plan.
         if (ActiveScheme() == scheme) Check(PowerSetActiveScheme(IntPtr.Zero, [scheme]));
     }

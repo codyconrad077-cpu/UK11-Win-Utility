@@ -131,7 +131,7 @@ public partial class MainWindow : Window
     private static void Draw(System.Windows.Shapes.Polyline line, Canvas canvas, List<double> values)
     {
         var width = Math.Max(1, canvas.ActualWidth); var height = canvas.Height;
-        line.Points = new PointCollection(values.Select((v, i) => new Point(i * width / 59, height * (1 - v / 100))));
+        line.Points = new PointCollection(values.Select((v, i) => new Point(i * width / Math.Max(1, values.Count - 1), 2 + (height - 4) * (1 - v / 100))));
     }
     private void RefreshRows()
     {

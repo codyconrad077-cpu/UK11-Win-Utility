@@ -59,13 +59,71 @@ internal static class WorkflowChecks
                 try { await workflow.RunAsync(action); throw new Exception("Missing administrator boundary: " + action); }
                 catch (InvalidOperationException ex) when (ex.Message.Contains("administrator")) { }
             }
+            await SandboxedRecovery(root, sourcePath);
             using var sensors = new Sensors(); var reading = sensors.Read();
             if (reading.GpuLoad is < 0 or > 100 || reading.CpuTemperature is < -30 or > 150 || reading.GpuTemperature is < -30 or > 150) throw new Exception("Implausible sensor data");
             if (string.IsNullOrWhiteSpace(reading.Status)) throw new Exception("Sensor capability status missing");
             Console.WriteLine("PASS real sensor read or explicit unavailability: " + reading.Status);
-            return new { scriptsParsed = actions.Length, invalidRequestsRejected = rejected, administratorBoundaries = actions.Count(Scripts.RequiresAdministrator), readOnly, cpuTemperatureAvailable = reading.CpuTemperature is not null, gpuTemperatureAvailable = reading.GpuTemperature is not null, mutationAcceptance = "App removal, DNS/service changes and installations were not performed on this runner. Test on a disposable Windows client before relying on recovery." };
+            return new { scriptsParsed = actions.Length, invalidRequestsRejected = rejected, administratorBoundaries = actions.Count(Scripts.RequiresAdministrator), readOnly, sandboxedRecoveryChecks = 5, cpuTemperatureAvailable = reading.CpuTemperature is not null, gpuTemperatureAvailable = reading.GpuTemperature is not null, mutationAcceptance = "Network/service recovery uses fake providers with real workflow scripts and disk journals. Real app removal, DNS/service changes and installations were not performed on this runner. Test on a disposable Windows client before relying on recovery." };
         }
         finally { Directory.Delete(root, true); }
+    }
+
+    private static async Task SandboxedRecovery(string root, string sourcePath)
+    {
+        // Substitute Windows providers, not operation code. These tests can mutate only fake
+        // in-memory state and journals in a temporary directory, never the host's configuration.
+        var common = "$ErrorActionPreference='Stop'; $rootData='" + root.Replace("'", "''") + "';\n" + Scripts.Common + "\n";
+        var network = common + """
+            $global:dns=@('9.9.9.9'); $global:manual='9.9.9.9'; $global:failResolution=$false
+            function Get-NetAdapter {param([switch]$Physical) [pscustomobject]@{ifIndex=5;InterfaceGuid=[guid]'11111111-2222-3333-4444-555555555555';Status='Up';Name='Sandbox'}}
+            function Get-DnsClientServerAddress {param($InterfaceIndex,$AddressFamily) [pscustomobject]@{ServerAddresses=$global:dns}}
+            function Get-ItemProperty {param($LiteralPath) [pscustomobject]@{NameServer=$global:manual}}
+            function Set-DnsClientServerAddress {param($InputObject,$ServerAddresses,[switch]$ResetServerAddresses) if($ResetServerAddresses){$global:dns=@('192.0.2.1');$global:manual=''}else{$global:dns=@($ServerAddresses);$global:manual=$ServerAddresses -join ','}}
+            function Clear-DnsClientCache {}
+            function Resolve-DnsName {param($Name,[switch]$DnsOnly,[switch]$QuickTimeout,$ErrorAction) if($global:failResolution){throw 'Injected resolution failure'}}
+            $request=[pscustomobject]@{index=5}
+            """ + "\n& {\n" + Scripts.Get("network-configure") + "\n} | Out-Null\n" + """
+            if(($global:dns -join ',') -ne '1.1.1.1,1.0.0.1'){throw 'DNS target was not applied'}
+            """ + "\n& {\n" + Scripts.Get("network-restore") + "\n} | Out-Null\n" + """
+            if(($global:dns -join ',') -ne '9.9.9.9' -or $global:manual -ne '9.9.9.9'){throw 'Static DNS original was not restored'}
+            $global:manual=''; $global:dns=@('192.0.2.1'); $global:failResolution=$true; $failed=$false
+            """ + "\ntry { & {\n" + Scripts.Get("network-configure") + "\n} | Out-Null } catch {$failed=$true}\n" + """
+            if(-not $failed -or $global:manual -ne '' -or ($global:dns -join ',') -ne '192.0.2.1'){throw 'Failed DNS setup did not recover DHCP mode'}
+            $journal=Get-Content (Join-Path $rootData 'network\11111111222233334444555555555555.json') -Raw | ConvertFrom-Json
+            if($journal.state -ne 'Restored'){throw 'Verified DNS rollback journal was not resolved'}
+            $global:failResolution=$false
+            """ + "\n& {\n" + Scripts.Get("network-configure") + "\n} | Out-Null\n$global:dns=@('203.0.113.2'); $global:manual='203.0.113.2'; $failed=$false\ntry { & {\n" + Scripts.Get("network-restore") + "\n} | Out-Null } catch {$failed=$true}\n" + """
+            if(-not $failed -or ($global:dns -join ',') -ne '203.0.113.2'){throw 'External DNS conflict was overwritten'}
+            """;
+        await PowerShell(network, sourcePath);
+        var service = common + """
+            $global:mode='Auto'; $global:state='Running'; $global:stopFails=$false
+            function Get-CimInstance {param($ClassName,$Filter) [pscustomobject]@{StartMode=$global:mode;State=$global:state}}
+            function Get-Service {param($Name) [pscustomobject]@{Status=$global:state;DependentServices=@()}}
+            function Get-ItemProperty {param($LiteralPath,$Name,$ErrorAction) $null}
+            function Remove-ItemProperty {param($LiteralPath,$Name,$ErrorAction)}
+            function Set-ItemProperty {throw 'Unexpected delayed-start write'}
+            function Set-Service {param($Name,$StartupType) $global:mode=@{Automatic='Auto';Manual='Manual';Disabled='Disabled'}[[string]$StartupType]}
+            function Stop-Service {param($Name,$ErrorAction) if($global:stopFails){throw 'Injected stop failure'}; $global:state='Stopped'}
+            function Start-Service {param($Name) $global:state='Running'}
+            $request=[pscustomobject]@{name='SysMain';disable=$true}
+            """ + "\n& {\n" + Scripts.Get("service-change") + "\n} | Out-Null\n" + """
+            if($global:mode -ne 'Disabled' -or $global:state -ne 'Stopped'){throw 'Optional service disable did not apply'}
+            $request.disable=$false
+            """ + "\n& {\n" + Scripts.Get("service-change") + "\n} | Out-Null\n" + """
+            if($global:mode -ne 'Auto' -or $global:state -ne 'Running'){throw 'Original service mode/running state was not recovered'}
+            $request.disable=$true; $global:stopFails=$true; $failed=$false
+            """ + "\ntry { & {\n" + Scripts.Get("service-change") + "\n} | Out-Null } catch {$failed=$true}\n" + """
+            if(-not $failed -or $global:mode -ne 'Disabled'){throw 'Injected partial service failure was not exercised'}
+            $request.disable=$false; $global:stopFails=$false
+            """ + "\n& {\n" + Scripts.Get("service-change") + "\n} | Out-Null\n" + """
+            if($global:mode -ne 'Auto' -or $global:state -ne 'Running'){throw 'Interrupted service original did not recover'}
+            $journal=Get-Content (Join-Path $rootData 'services\SysMain.json') -Raw | ConvertFrom-Json
+            if($journal.state -ne 'Restored'){throw 'Service recovery journal remains unresolved'}
+            """;
+        await PowerShell(service, sourcePath);
+        Console.WriteLine("PASS 5 sandboxed workflow recovery scenarios: static DNS, DHCP rollback, external conflict, service restore, interrupted service recovery");
     }
 
     private static async Task PowerShell(string script, string sourcePath)

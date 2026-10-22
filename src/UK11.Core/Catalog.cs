@@ -1,0 +1,58 @@
+namespace UK11.Core;
+
+public static class Catalog
+{
+    private const string Explorer = @"Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced";
+    private const string Content = @"Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager";
+    private const string Refresh = "Sign out and back in if the interface does not refresh.";
+    private static Tweak Preference(string id, string title, string category, string path, string name, int value, string effect) =>
+        new(id, title, category, path, name, value, effect, Refresh);
+    public static IReadOnlyList<Tweak> All { get; } = new[]
+    {
+        Preference("visual.transparency", "Reduce desktop transparency", "Visual effects", @"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize", "EnableTransparency", 0, "Use opaque desktop surfaces. May reduce compositing work; no guaranteed game FPS benefit."),
+        Preference("visual.taskbar-animation", "Reduce taskbar animations", "Visual effects", Explorer, "TaskbarAnimations", 0, "Remove taskbar transitions. This changes presentation rather than game rendering performance."),
+        new Tweak("capture.app-capture", "Disable app game capture", "Gaming", @"Software\Microsoft\Windows\CurrentVersion\GameDVR", "AppCaptureEnabled", 0, "Disable this user's app capture preference. Game recording may become unavailable; other capture policies can override this setting.", "Reopen games and Game Bar."),
+        Preference("gaming.background-capture", "Turn off historical game recording", "Gaming", @"System\GameConfigStore", "GameDVR_Enabled", 0, "Disable this user's historical Game DVR recording preference. Check Captures settings afterward; this is not a universal overlay switch."),
+        Preference("visual.selection", "Use an outline selection rectangle", "Visual effects", Explorer, "ListviewAlphaSelect", 0, "Replace Explorer's translucent selection fill with an outline. A visual preference, not a proven FPS improvement."),
+        Preference("visual.icon-shadow", "Remove desktop icon text shadows", "Visual effects", Explorer, "ListviewShadow", 0, "Remove shadows under desktop labels. Contrast may be worse with some wallpapers."),
+        Preference("visual.dark-apps", "Use dark application surfaces", "Appearance", @"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize", "AppsUseLightTheme", 0, "Use dark mode in apps that follow the Windows colour preference. Does not change unsupported applications."),
+        Preference("visual.dark-shell", "Use the dark Windows shell", "Appearance", @"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize", "SystemUsesLightTheme", 0, "Use dark Start, taskbar and compatible shell surfaces. Availability depends on Windows version."),
+        Preference("explorer.extensions", "Show file extensions", "File Explorer", Explorer, "HideFileExt", 0, "Show full file extensions to make file types easier to identify. No performance claim."),
+        Preference("explorer.hidden", "Show hidden files", "File Explorer", Explorer, "Hidden", 1, "Display hidden files. Protected operating-system files remain controlled separately; do not edit unfamiliar system files."),
+        Preference("explorer.protected", "Keep protected system files hidden", "File Explorer", Explorer, "ShowSuperHidden", 0, "Hide protected operating-system files to reduce accidental modification. This does not hide ordinary hidden files."),
+        Preference("explorer.this-pc", "Open Explorer to This PC", "File Explorer", Explorer, "LaunchTo", 1, "Open new Explorer windows on This PC rather than Home or Quick access."),
+        Preference("explorer.expand", "Expand the current folder in navigation", "File Explorer", Explorer, "NavPaneExpandToCurrentFolder", 1, "Follow the current folder in Explorer's navigation tree."),
+        Preference("explorer.all-folders", "Show all navigation folders", "File Explorer", Explorer, "NavPaneShowAllFolders", 1, "Show the expanded navigation hierarchy, which can make the sidebar busier."),
+        Preference("explorer.checkboxes", "Use item selection check boxes", "File Explorer", Explorer, "AutoCheckSelect", 1, "Add selection check boxes to Explorer items for easier multi-selection."),
+        Preference("explorer.full-path", "Show full paths in Explorer titles", "File Explorer", @"Software\Microsoft\Windows\CurrentVersion\Explorer\CabinetState", "FullPath", 1, "Show the current directory path in Explorer titles where supported."),
+        Preference("explorer.infotips", "Show file information tooltips", "File Explorer", Explorer, "ShowInfoTip", 1, "Show file metadata when hovering items. May require extra metadata reads on slow locations."),
+        Preference("explorer.status", "Show Explorer's status bar", "File Explorer", Explorer, "ShowStatusBar", 1, "Display selection and item information in Explorer's status bar."),
+        Preference("explorer.thumbnails", "Use file thumbnails", "File Explorer", Explorer, "IconsOnly", 0, "Show supported thumbnails rather than only generic icons. Thumbnail generation can add work in large media folders."),
+        Preference("explorer.sync-ads", "Hide sync-provider suggestions", "Privacy", Explorer, "ShowSyncProviderNotifications", 0, "Hide sync-provider promotional suggestions in File Explorer. Does not stop OneDrive syncing."),
+        Preference("privacy.recent-files", "Hide recent files in Explorer Home", "Privacy", @"Software\Microsoft\Windows\CurrentVersion\Explorer", "ShowRecent", 0, "Stop showing recent files in Explorer Home or Quick access. Does not securely erase existing activity."),
+        Preference("privacy.frequent-folders", "Hide frequent folders in Explorer Home", "Privacy", @"Software\Microsoft\Windows\CurrentVersion\Explorer", "ShowFrequent", 0, "Stop listing frequently used folders in Explorer Home or Quick access."),
+        Preference("privacy.advertising", "Disable the advertising ID preference", "Privacy", @"Software\Microsoft\Windows\CurrentVersion\AdvertisingInfo", "Enabled", 0, "Turn off this user's advertising identifier preference. Does not block ads or all telemetry."),
+        Preference("privacy.tailored", "Disable tailored diagnostic experiences", "Privacy", @"Software\Microsoft\Windows\CurrentVersion\Privacy", "TailoredExperiencesWithDiagnosticDataEnabled", 0, "Decline personalised experiences based on diagnostic data. Does not disable Windows diagnostics."),
+        Preference("suggestions.soft-landing", "Hide Windows tips and suggestions", "Suggestions", Content, "SoftLandingEnabled", 0, "Hide compatible Windows tip surfaces. Individual applications can still display their own tips."),
+        Preference("suggestions.suggested-content", "Hide suggested content", "Suggestions", Content, "SubscribedContent-338393Enabled", 0, "Disable the existing Settings suggested-content subscription. Availability and effect depend on Windows build."),
+        Preference("suggestions.welcome", "Hide the Windows welcome experience", "Suggestions", Content, "SubscribedContent-310093Enabled", 0, "Decline the Windows welcome experience after updates when this subscription is supported."),
+        Preference("suggestions.lock-tips", "Hide lock-screen tips", "Suggestions", Content, "SubscribedContent-338387Enabled", 0, "Hide the existing lock-screen tips subscription. Does not disable the lock screen."),
+        Preference("suggestions.app-suggestions", "Disable suggested app subscriptions", "Suggestions", Content, "SubscribedContent-338388Enabled", 0, "Decline this existing app-suggestion subscription. Does not uninstall applications."),
+        Preference("suggestions.silent-apps", "Decline silently suggested apps", "Suggestions", Content, "SilentInstalledAppsEnabled", 0, "Disable the existing silent app-suggestion preference. Does not remove existing apps or stop security updates."),
+        Preference("suggestions.preinstalled", "Decline preinstalled-app suggestions", "Suggestions", Content, "PreInstalledAppsEnabled", 0, "Turn off this existing content-delivery preference. Does not remove installed Windows components."),
+        Preference("suggestions.oem", "Decline OEM app suggestions", "Suggestions", Content, "OemPreInstalledAppsEnabled", 0, "Decline OEM preinstalled-app suggestion delivery where Windows honours this preference."),
+        Preference("suggestions.rotating-lock", "Disable rotating lock-screen content", "Suggestions", Content, "RotatingLockScreenEnabled", 0, "Disable rotating Spotlight lock-screen content where this existing preference is active. Keep a static background instead."),
+        Preference("suggestions.lock-overlay", "Disable Spotlight lock-screen overlays", "Suggestions", Content, "RotatingLockScreenOverlayEnabled", 0, "Hide promotional overlay content on compatible Spotlight lock screens."),
+        Preference("suggestions.finish-setup", "Hide finish-setting-up reminders", "Suggestions", @"Software\Microsoft\Windows\CurrentVersion\UserProfileEngagement", "ScoobeSystemSettingEnabled", 0, "Decline this existing finish-setting-up reminder preference. Does not bypass required Windows setup."),
+        Preference("taskbar.task-view", "Hide the Task View button", "Taskbar", Explorer, "ShowTaskViewButton", 0, "Hide the dedicated Task View button. The Windows+Tab shortcut continues to work."),
+        Preference("taskbar.search", "Hide the taskbar search control", "Taskbar", @"Software\Microsoft\Windows\CurrentVersion\Search", "SearchboxTaskbarMode", 0, "Hide the taskbar search box/button. Start search remains available; indexing is not disabled."),
+        Preference("taskbar.badges", "Hide application taskbar badges", "Taskbar", Explorer, "TaskbarBadges", 0, "Hide app badge counts where supported. Does not stop application notifications."),
+        Preference("taskbar.multi-display", "Use the taskbar on the primary display only", "Taskbar", Explorer, "MMTaskbarEnabled", 0, "Hide additional taskbars on secondary displays. This changes multi-monitor navigation."),
+        Preference("taskbar.widgets", "Hide the Widgets button", "Taskbar", Explorer, "TaskbarDa", 0, "Hide the Windows 11 Widgets taskbar button where this existing preference is supported. Widgets may still run in the background.") with { MinimumBuild = 22000 },
+        Preference("taskbar.left-align", "Align taskbar icons to the left", "Taskbar", Explorer, "TaskbarAl", 0, "Use left-aligned taskbar icons on compatible Windows 11 builds.") with { MinimumBuild = 22000 },
+        Preference("taskbar.cortana", "Hide the Cortana taskbar button", "Taskbar", Explorer, "ShowCortanaButton", 0, "Hide the legacy Windows 10 Cortana taskbar button. Does not disable services or affect newer Windows releases.") with { MaximumBuild = 21999 },
+        Preference("search.history", "Stop device search history", "Privacy", @"Software\Microsoft\Windows\CurrentVersion\SearchSettings", "IsDeviceSearchHistoryEnabled", 0, "Decline on-device search history. Existing history may require clearing separately in Windows Settings."),
+        Preference("search.microsoft-cloud", "Exclude personal Microsoft cloud search", "Privacy", @"Software\Microsoft\Windows\CurrentVersion\SearchSettings", "IsMSACloudSearchEnabled", 0, "Exclude personal Microsoft account cloud results from Windows Search. Local search still works."),
+        Preference("search.work-cloud", "Exclude work-account cloud search", "Privacy", @"Software\Microsoft\Windows\CurrentVersion\SearchSettings", "IsAADCloudSearchEnabled", 0, "Exclude work or school account cloud results from Windows Search. Organisational policy may override this preference.")
+    };
+}

@@ -89,7 +89,55 @@ try
     count++; Console.WriteLine("PASS invalid backup metadata rejected");
 }
 finally { if (Directory.Exists(restartDir)) Directory.Delete(restartDir, true); }
-Console.WriteLine($"{count} tests passed. These use a fake settings store, not the Windows registry.");
+Run("dynamic power bounds and increments reject invalid targets", (e, s) =>
+{
+    var power = t with { Id = "power-test", Backend = "PowerAC", Minimum = 10, Maximum = 100, Increment = 5, Desired = 12 };
+    Throws(() => e.Apply(power)); Check(s.Writes == 0, "invalid power target must not write");
+    power = power with { Desired = 20 }; e.Apply(power);
+    Check(s.Current.Number == 20, "valid target writes");
+    e.Restore(power with { Desired = 55 }); Check(s.Current.Number == 1, "original restores independently from current UI selection");
+});
+Run("enumerated power choices exclude arbitrary numbers", (e, s) =>
+{
+    var power = t with { Id = "power-choice", Backend = "PowerDC", Choices = [new(0, "Off"), new(2, "On")], Desired = 1 };
+    Throws(() => e.Apply(power)); Check(s.Writes == 0, "unknown choice rejected");
+    e.Apply(power with { Desired = 2 }); e.Restore(power);
+    Check(s.Current.Number == 1, "choice original restored");
+});
+Run("read-only power settings cannot write", (e, s) =>
+{
+    Throws(() => e.Apply(t with { Writable = false })); Check(s.Writes == 0, "policy restriction respected");
+});
+var batchDir = Path.Combine(Path.GetTempPath(), "uk11-batch-" + Guid.NewGuid());
+try
+{
+    var pair = Catalog.All.Take(2).ToArray();
+    var map = new MapStore(pair); var batch = new Engine(map, batchDir);
+    Check(batch.ApplyBatch(pair) == 2, "batch applies all targets");
+    foreach (var item in pair) batch.Restore(item);
+    Check(pair.All(x => map.Read(x).Number == 7), "batch originals restore");
+    count++; Console.WriteLine("PASS successful multi-setting batch");
+    map.FailAfterMutation = pair[1].Id;
+    Throws(() => batch.ApplyBatch(pair));
+    Check(pair.All(x => map.Read(x).Number == 7), "partial batch rolls back including failed mutation");
+    count++; Console.WriteLine("PASS partial batch failure rolls back every attempted change");
+    var writes = map.Writes;
+    var preview = pair.ToDictionary(x => x.Id, _ => new Value(true, 9));
+    Throws(() => batch.ApplyBatch(pair, expected: preview));
+    Check(map.Writes == writes, "stale preview aborts before writes");
+    count++; Console.WriteLine("PASS stale preview blocks mutation");
+    Throws(() => batch.ApplyBatch([pair[0], pair[0]]));
+    Check(map.Writes == writes, "duplicates rejected without mutation");
+    count++; Console.WriteLine("PASS duplicate batch targets rejected");
+    map.Values[pair[1].Id] = new(false);
+    Throws(() => batch.ApplyBatch(pair)); Check(map.Writes == writes, "unavailable target blocks whole batch");
+    count++; Console.WriteLine("PASS complete batch preflight before any write");
+}
+finally { if (Directory.Exists(batchDir)) Directory.Delete(batchDir, true); }
+Check(Catalog.All.Select(x => x.Id).Distinct().Count() == Catalog.All.Count, "unique IDs");
+Check(Catalog.All.Select(x => x.Path + "\\" + x.Name).Distinct().Count() == Catalog.All.Count, "unique registry targets");
+count++; Console.WriteLine("PASS catalogue IDs and targets are unique");
+Console.WriteLine($"{count} tests passed. These use fake settings stores, not the Windows registry or power APIs.");
 
 void Run(string name, Action<Engine, Fake> test)
 {
@@ -116,5 +164,18 @@ sealed class Fake : ISettingsStore
         Writes++;
         if (FailWrite) throw new IOException("Injected write failure");
         if (!IgnoreWrite) Current = value;
+    }
+}
+sealed class MapStore(IEnumerable<Tweak> tweaks) : ISettingsStore
+{
+    public bool Supported => true;
+    public readonly Dictionary<string, Value> Values = tweaks.ToDictionary(t => t.Id, _ => new Value(true, 7));
+    public string? FailAfterMutation;
+    public int Writes;
+    public Value Read(Tweak t) => Values[t.Id];
+    public void Write(Tweak t, Value value)
+    {
+        Writes++; Values[t.Id] = value;
+        if (FailAfterMutation == t.Id) { FailAfterMutation = null; throw new IOException("Injected failure after mutation"); }
     }
 }

@@ -7,6 +7,7 @@ namespace UK11.Windows;
 public sealed class RegistrySettings : ISettingsStore
 {
     public bool Supported => OperatingSystem.IsWindowsVersionAtLeast(10, 0, 10240);
+    public bool Supports(Tweak t) => Supported && Environment.OSVersion.Version.Build >= t.MinimumBuild && Environment.OSVersion.Version.Build <= t.MaximumBuild;
     public Value Read(Tweak t)
     {
         using var key = Registry.CurrentUser.OpenSubKey(t.Path);
@@ -16,7 +17,7 @@ public sealed class RegistrySettings : ISettingsStore
     }
     public void Write(Tweak t, Value value)
     {
-        if (!Supported) throw new PlatformNotSupportedException();
+        if (!Supports(t)) throw new PlatformNotSupportedException();
         using var key = Registry.CurrentUser.OpenSubKey(t.Path, true) ?? throw new IOException("Registry key unavailable");
         if (value.Exists) key.SetValue(t.Name, value.Number, RegistryValueKind.DWord);
         else key.DeleteValue(t.Name, false);
@@ -30,7 +31,7 @@ public static class Hardware
 {
     private static string Read(string path, string name)
     {
-        try { using var key = Registry.LocalMachine.OpenSubKey(path); return key?.GetValue(name)?.ToString()?.Trim() ?? "Unavailable"; }
+        try { using var key = Registry.LocalMachine.OpenSubKey(path); var value = key?.GetValue(name); return value is string[] parts ? string.Join(" · ", parts) : value?.ToString()?.Trim() ?? "Unavailable"; }
         catch (Exception ex) when (ex is UnauthorizedAccessException or System.Security.SecurityException or IOException)
         { return "Unavailable: " + ex.Message; }
     }

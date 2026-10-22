@@ -49,14 +49,16 @@ jobs:
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
           $notes = @'
-          UK11 ULTIMATE — first development milestone.
+          UK11 ULTIMATE — redesigned control centre preview.
 
           Download UK11.Ultimate.exe below and run it on Windows 10/11 x64. It is self-contained: no separate .NET installation or ZIP extraction is required.
 
-          Includes dashboard, hardware inventory, live memory monitoring, three reversible current-user settings, persistent preferences and verified per-setting backup/restore.
+          Includes the redesigned dashboard with live CPU and memory graphs, searchable categorized library, favourites, setting inspector, confirmation previews, transactional preference batches, exact-value restore and activity history.
 
-          Windows compilation, 19 core tests and four native registry/hardware checks pass. Interactive UI, real desktop-setting effects and clean-machine execution still require manual acceptance. This executable is unsigned and is an early preview, not a production release. No measured FPS gains are claimed.
+          The catalogue contains 45 current-user Windows preferences plus power parameters discovered through Microsoft's power-management APIs. Each power setting has separate plugged-in and battery values; counts depend on the computer. Only OS-reported options and ranges are accepted. Power controls are advanced configuration choices and are not bulk "optimised" automatically.
+
+          Build checks include portable fault-injection tests, isolated native registry tests, write/verify/restore against an inactive duplicate power plan, and WPF startup/navigation/filter/favourites/rendering checks. See the attached native and UI reports for counts. Actual setting effects, performance gains and clean-machine acceptance are not proven by these checks. This is an unsigned preview.
           '@
           $notes | Set-Content -Path release-notes.md -Encoding utf8
-          gh release create "$env:RELEASE_TAG" release-files/UK11.Ultimate.exe --repo "$env:RELEASE_REPOSITORY" --verify-tag --prerelease --title "UK11 ULTIMATE $env:RELEASE_TAG" --notes-file release-notes.md
+          gh release create "$env:RELEASE_TAG" release-files/UK11.Ultimate.exe release-files/ui-preview.png release-files/ui-preview-catalogue.png release-files/native-report.json release-files/ui-preview.png.json --repo "$env:RELEASE_REPOSITORY" --verify-tag --prerelease --title "UK11 ULTIMATE $env:RELEASE_TAG" --notes-file release-notes.md
           if ($LASTEXITCODE -ne 0) { throw 'GitHub release upload failed' }
